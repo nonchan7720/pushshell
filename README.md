@@ -92,6 +92,17 @@ mise run app:run:android            # Metro 付きで実行 (expo run:android)
 実機なら USB デバッグを有効にして `mise run android:devices` で見えることを確認し、
 `mise run app:run:android` を実行してください。
 
+エミュレータ関連の環境変数 (`.mise.toml` の `[env]`、`.env` で上書き可):
+
+| 変数 | 内容 | 既定 |
+|---|---|---|
+| `ANDROID_SYSTEM_IMAGE_TAG` | `google_apis` (Play services あり。FCM の確認に必要) か `default` (AOSP のみ。軽い) | `google_apis` |
+| `ANDROID_AVD_NAME` | AVD 名 | `webapp-notification` |
+| `ANDROID_EMULATOR_EXTRA_ARGS` | `emulator` に渡す追加引数 (例: `-cores 2 -memory 3072`) | なし |
+
+KVM が使えない環境 (CI コンテナなど) ではソフトウェアエミュレーションになり、起動に 20〜30 分かかることがあります。
+その場合は `ANDROID_SYSTEM_IMAGE_TAG=default` と `-cores 2` 程度に抑えると安定します。
+
 ## 開発タスク
 
 | タスク | 内容 |

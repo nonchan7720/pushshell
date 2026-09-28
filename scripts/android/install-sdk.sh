@@ -13,7 +13,8 @@ set -euo pipefail
 : "${ANDROID_BUILD_TOOLS:=36.0.0}"
 : "${ANDROID_NDK_VERSION:=27.1.12297006}"
 : "${ANDROID_CMAKE_VERSION:=3.22.1}"
-: "${ANDROID_SYSTEM_IMAGE:=system-images;${ANDROID_PLATFORM};google_apis;x86_64}"
+: "${ANDROID_SYSTEM_IMAGE_TAG:=google_apis}"
+: "${ANDROID_SYSTEM_IMAGE:=system-images;${ANDROID_PLATFORM};${ANDROID_SYSTEM_IMAGE_TAG};x86_64}"
 REPO_XML="https://dl.google.com/android/repository/repository2-3.xml"
 
 os_tag() {

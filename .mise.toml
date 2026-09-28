@@ -22,6 +22,9 @@ ANDROID_BUILD_TOOLS = "36.0.0"
 ANDROID_NDK_VERSION = "27.1.12297006"
 ANDROID_CMAKE_VERSION = "3.22.1"
 ANDROID_AVD_NAME = "webapp-notification"
+# system image のタグ。google_apis (Play services あり、FCM の確認に必要) か
+# default (AOSP のみ。軽いので KVM が無い環境や WebView の確認向け)
+ANDROID_SYSTEM_IMAGE_TAG = "google_apis"
 _.path = [
   "{{env.HOME}}/.android-sdk/cmdline-tools/latest/bin",
   "{{env.HOME}}/.android-sdk/platform-tools",
@@ -192,16 +195,16 @@ description = "Android SDK (platform-tools, platform 36, build-tools, NDK, cmake
 run = "bash scripts/android/install-sdk.sh"
 
 [tasks."android:emulator:install"]
-description = "エミュレータと system image (android-36 google_apis x86_64) をインストール"
+description = "エミュレータと system image (ANDROID_PLATFORM / ANDROID_SYSTEM_IMAGE_TAG, x86_64) をインストール"
 env = { ANDROID_EMULATOR = "1" }
 run = "bash scripts/android/install-sdk.sh"
 
 [tasks."android:avd:create"]
-description = "AVD を作成 (Pixel 7, android-36 google_apis x86_64)"
+description = "AVD を作成 (Pixel 7, ANDROID_PLATFORM / ANDROID_SYSTEM_IMAGE_TAG, x86_64)"
 depends = ["android:emulator:install"]
 run = '''
 echo no | avdmanager create avd --force --name "$ANDROID_AVD_NAME" \
-  --package "system-images;$ANDROID_PLATFORM;google_apis;x86_64" --device pixel_7
+  --package "system-images;$ANDROID_PLATFORM;$ANDROID_SYSTEM_IMAGE_TAG;x86_64" --device pixel_7
 # 既定の userdata (12GB) は開発用には大きすぎるので縮小する (空きディスクが少ない環境向け)
 cfg="$HOME/.android/avd/$ANDROID_AVD_NAME.avd/config.ini"
 if [ -f "$cfg" ]; then
@@ -212,14 +215,14 @@ fi
 '''
 
 [tasks."android:emulator"]
-description = "エミュレータを起動 (KVM が無い環境では自動的にソフトウェアエミュレーション)"
+description = "エミュレータを起動 (KVM が無ければ自動でソフトウェアエミュレーション。ANDROID_EMULATOR_EXTRA_ARGS で -cores/-memory 等を追加)"
 run = '''
 extra=""
 if [ "${ANDROID_EMULATOR_NO_ACCEL:-0}" = "1" ] || [ ! -e /dev/kvm ]; then
   echo "KVM が使えないためソフトウェアエミュレーションで起動します (非常に遅い)"
   extra="-no-accel -no-window -gpu swiftshader_indirect -no-audio -no-boot-anim"
 fi
-emulator -avd "$ANDROID_AVD_NAME" $extra
+emulator -avd "$ANDROID_AVD_NAME" $extra ${ANDROID_EMULATOR_EXTRA_ARGS:-}
 '''
 
 [tasks."android:devices"]
