@@ -10,6 +10,8 @@
 | `02-login-registered.png` | `login` 送信 → バックエンド `POST /v1/devices` 200 → `registered` イベント |
 | `03-notification-tapped.png` | `POST /v1/notifications` 送信後、通知タップ相当の `notification` イベント |
 | `evidence.json` | 各 API 呼び出しのステータスとレスポンス |
+| `04-emulator-dev-client.png` | **エミュレータ (Android 16 x86_64, KVM なし) で debug APK を起動**した実画面。env で注入したアプリ名 `WebApp` と runtime 1.0.0 が Expo 開発者メニューに出ている。この直後に WebView の初期化で libwebviewchromium が CHECK 失敗 (SIGTRAP) し、ページは表示できなかった (ソフトウェアエミュレーション起因と推定。詳細は PR 参照) |
+| `05-emulator-network-error.png` | 同エミュレータで dev client が Metro (10.0.2.2:8081) に到達できなかった際のエラー画面。`adb reverse` で回避した |
 
 再現:
 
