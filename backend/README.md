@@ -56,10 +56,66 @@ Go の `go`/`go generate` は `GOFLAGS=-mod=mod` 前提 ([env] で設定済み)�
 | `DB_DSN` | `file:data/app.db?_pragma=foreign_keys(1)&_pragma=journal_mode(WAL)` | `database/sql` に渡す DSN (dialect ごとに書式が違う。`.env.example` に例あり) |
 | `DB_AUTO_MIGRATE` | `false` | 起動時に `client.Schema.Create` で自動作成する (開発用。本番は Atlas を使う) |
 | `API_KEY` | (空) | `X-API-Key` で守られた API (`POST /v1/notifications`, `GET /v1/devices/{id}`) のキー。空だと常に 401 |
-| `PUSH_PROVIDER` | `expo` | `expo` \| `log` (`log` は送信せずログ出力するだけ。開発・smoke test 用) |
-| `EXPO_ACCESS_TOKEN` | (空) | Expo Push API のアクセストークン (任意) |
+| `PUSH_PROVIDER` | `expo` | `expo` \| `native` \| `log` (下記「プッシュ通知プロバイダ」参照) |
+| `EXPO_ACCESS_TOKEN` | (空) | Expo Push API のアクセストークン (任意。`PUSH_PROVIDER=expo`) |
+| `FCM_SERVICE_ACCOUNT_FILE` | (空) | FCM サービスアカウント JSON のパス (`PUSH_PROVIDER=native`。`FCM_SERVICE_ACCOUNT_JSON` と排他) |
+| `FCM_SERVICE_ACCOUNT_JSON` | (空) | FCM サービスアカウント JSON の中身 (同上) |
+| `FCM_PROJECT_ID` | (空) | 省略時はサービスアカウント JSON 内の `project_id` を使う |
+| `APNS_KEY_FILE` | (空) | APNs 用 `.p8` Auth Key のパス (`PUSH_PROVIDER=native`。`APNS_KEY` と排他) |
+| `APNS_KEY` | (空) | APNs 用 `.p8` の中身 (PEM。同上) |
+| `APNS_KEY_ID` | (空) | `.p8` に対応する Key ID |
+| `APNS_TEAM_ID` | (空) | Apple Developer の Team ID |
+| `APNS_TOPIC` | (空) | `apns-topic` に使う値 (通常はアプリのバンドル ID) |
+| `APNS_ENVIRONMENT` | `production` | `sandbox` \| `production` |
 | `SHUTDOWN_TIMEOUT` | `10s` | graceful shutdown の待ち時間 |
 | `LOG_LEVEL` | `info` | `debug` \| `info` \| `warn` \| `error` |
+
+### プッシュ通知プロバイダ (`PUSH_PROVIDER`)
+
+端末はアプリ登録時に Expo Push Token (`pushToken`) と、取得できればネイティブ
+のデバイストークン (`deviceToken`: Android は FCM registration token、iOS は
+APNs device token の hex) の両方 (もしくはどちらか一方) を送ってくる
+(`POST /v1/devices`。少なくとも一方が必須で、両方とも空だと 400
+`invalid_request`)。バックエンドは `PUSH_PROVIDER` に応じてどちらのトークン
+を使って送信するかを切り替える。両方登録されている端末はどちらのモードでも
+送信できる。
+
+- **`expo` (既定)**: [Expo Push API](https://docs.expo.dev/push-notifications/sending-notifications/)
+  を経由して送信する (`internal/push/expo.go`, `push.ExpoSender`)。
+  `pushToken` を使う。アプリ側は Expo Application Services (EAS) の push
+  token を取得して送ればよく、**Expo Push 自体は無料** (Expo アカウントも
+  無料枠で足りる)。バックエンド側の追加の認証情報は不要 (`EXPO_ACCESS_TOKEN`
+  は任意)。
+- **`native`**: Android は FCM HTTP v1、iOS は APNs に直接送信する
+  (`internal/push/fcm.go`, `internal/push/apns.go`, `internal/push/native.go`
+  の `push.NativeSender`)。`deviceToken` を使う。**FCM/APNs 自体の利用料は
+  無料**だが、それぞれ自分の Firebase プロジェクト / Apple Developer
+  Program のアカウントと認証情報が必要になる (下記)。`FCM_*` /
+  `APNS_*` のどちらか一方だけ設定してもよい (その OS のみネイティブ送信可能
+  になり、もう一方の OS 向けメッセージはエラーになる。両方とも未設定だと
+  起動時エラーで落ちる)。
+- **`log`**: 送信せずログに出すだけ (`push.LogSender`)。ローカル開発・smoke
+  test 向け。
+
+**FCM のサービスアカウントの取得方法**: Firebase コンソール →
+対象プロジェクトを開く → 右上の歯車アイコン → 「プロジェクトの設定」→
+「サービス アカウント」タブ → 「新しい秘密鍵の生成」。ダウンロードされる
+JSON ファイルを `FCM_SERVICE_ACCOUNT_FILE` (ファイルパス) か
+`FCM_SERVICE_ACCOUNT_JSON` (中身をそのまま環境変数に) で渡す。
+
+**APNs の鍵の取得方法**: [Apple Developer](https://developer.apple.com/account) →
+Certificates, Identifiers & Profiles → Keys → 「+」→ 「Apple Push
+Notifications service (APNs)」にチェックを入れて鍵を作成 → ダウンロード
+(`.p8`、**ダウンロードできるのは一度だけ**)。`.p8` の中身を `APNS_KEY_FILE`
+(ファイルパス) か `APNS_KEY` (PEM をそのまま環境変数に) で渡し、鍵作成画面に
+表示される Key ID を `APNS_KEY_ID`、Apple Developer の Membership に表示さ
+れる Team ID を `APNS_TEAM_ID`、アプリのバンドル ID を `APNS_TOPIC` に設定
+する。開発ビルド (Xcode から直接インストールしたもの、TestFlight/App Store
+配布ではないもの) に送る場合は `APNS_ENVIRONMENT=sandbox` にする。
+
+アプリ側は `PUSH_PROVIDER` (app 側の環境変数。バックエンドの
+`PUSH_PROVIDER` と揃える) で `pushToken`/`deviceToken` のどちらを取得して
+送るかを決める。
 
 ## 実行
 
@@ -227,11 +283,14 @@ curl -X DELETE localhost:8080/v1/devices/install-uuid-1
 
 ## 差し替えポイント
 
-- **`push.Sender`** (`internal/push/push.go`): プッシュ送信の抽象。既定は
-  `push.ExpoSender` (Expo Push API)。FCM/APNs を直接使いたい場合や、テストで
-  送信を記録したい場合は `Sender` を実装して `handler.New(..., sender, ...)`
-  に渡す (`push.LogSender` は開発用の実装例)。`cmd/server/main.go` では
-  `PUSH_PROVIDER` で `ExpoSender`/`LogSender` を切り替えている。
+- **`push.Sender`** (`internal/push/push.go`): プッシュ送信の抽象。標準で
+  `push.ExpoSender` (Expo Push API, `expo.go`)、`push.FCMSender` (FCM HTTP
+  v1, `fcm.go`)、`push.APNSSender` (APNs token 認証, `apns.go`)、その二つを
+  `Message.Platform` で振り分ける `push.NativeSender` (`native.go`) を持つ。
+  独自のバックエンドに送りたい場合やテストで送信を記録したい場合は
+  `Sender` を実装して `handler.New(..., sender, ...)` に渡す
+  (`push.LogSender` は開発用の実装例)。`cmd/server/main.go` の
+  `buildSender` が `PUSH_PROVIDER` (`expo`/`native`/`log`) に応じて組み立てる。
 - **`handler.Authorizer`** (`internal/handler/auth.go`): 端末登録・解除の
   認可。既定の `handler.AllowAll` は何も検証しない。Web アプリのセッション
   Cookie/JWT などを検証したい場合は `AuthorizeDevice(ctx, loginID, token
