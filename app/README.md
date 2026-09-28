@@ -80,6 +80,20 @@ npx expo start --dev-client
 npm run typecheck
 ```
 
+### Android SDK を mise で用意する
+
+JDK 17 は `mise install` で入ります。Android SDK (platform 36 / build-tools 36.0.0 / NDK 27.1 / cmake)
+はリポジトリ直下で次を実行すると `~/.android-sdk` にインストールされ、`ANDROID_HOME` と `PATH` は
+`.mise.toml` が設定します。
+
+```sh
+mise run android:sdk                 # SDK 本体
+mise run app:build:android:local     # prebuild + gradlew assembleDebug で debug APK を作る
+mise run android:avd:create          # エミュレータ + system image + AVD (任意)
+mise run android:emulator            # エミュレータ起動 (KVM が無ければソフトウェアエミュレーション)
+mise run app:run:android             # Metro 付きで実行
+```
+
 ## 3. EAS Build
 
 ```sh

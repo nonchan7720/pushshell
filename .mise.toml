@@ -202,6 +202,13 @@ depends = ["android:emulator:install"]
 run = '''
 echo no | avdmanager create avd --force --name "$ANDROID_AVD_NAME" \
   --package "system-images;$ANDROID_PLATFORM;google_apis;x86_64" --device pixel_7
+# 既定の userdata (12GB) は開発用には大きすぎるので縮小する (空きディスクが少ない環境向け)
+cfg="$HOME/.android/avd/$ANDROID_AVD_NAME.avd/config.ini"
+if [ -f "$cfg" ]; then
+  grep -q '^disk.dataPartition.size=' "$cfg" \
+    && sed -i 's/^disk.dataPartition.size=.*/disk.dataPartition.size=4G/' "$cfg" \
+    || echo 'disk.dataPartition.size=4G' >> "$cfg"
+fi
 '''
 
 [tasks."android:emulator"]
