@@ -14,17 +14,18 @@ java = "temurin-17"
 [env]
 _.file = [".env", ".env.local"]
 GOFLAGS = "-mod=mod"
-# Android SDK の置き場所 (mise run android:sdk でここにインストールされる)
+# Android SDK の置き場所 (mise run android:sdk でここにインストールされる)。
+# 以下はシェルの環境変数や .env で上書きできる (get_env の default が既定値)。
 ANDROID_HOME = "{{env.HOME}}/.android-sdk"
 ANDROID_SDK_ROOT = "{{env.HOME}}/.android-sdk"
-ANDROID_PLATFORM = "android-36"
-ANDROID_BUILD_TOOLS = "36.0.0"
-ANDROID_NDK_VERSION = "27.1.12297006"
-ANDROID_CMAKE_VERSION = "3.22.1"
-ANDROID_AVD_NAME = "webapp-notification"
+ANDROID_PLATFORM = "{{ get_env(name='ANDROID_PLATFORM', default='android-36') }}"
+ANDROID_BUILD_TOOLS = "{{ get_env(name='ANDROID_BUILD_TOOLS', default='36.0.0') }}"
+ANDROID_NDK_VERSION = "{{ get_env(name='ANDROID_NDK_VERSION', default='27.1.12297006') }}"
+ANDROID_CMAKE_VERSION = "{{ get_env(name='ANDROID_CMAKE_VERSION', default='3.22.1') }}"
+ANDROID_AVD_NAME = "{{ get_env(name='ANDROID_AVD_NAME', default='webapp-notification') }}"
 # system image のタグ。google_apis (Play services あり、FCM の確認に必要) か
 # default (AOSP のみ。軽いので KVM が無い環境や WebView の確認向け)
-ANDROID_SYSTEM_IMAGE_TAG = "google_apis"
+ANDROID_SYSTEM_IMAGE_TAG = "{{ get_env(name='ANDROID_SYSTEM_IMAGE_TAG', default='google_apis') }}"
 _.path = [
   "{{env.HOME}}/.android-sdk/cmdline-tools/latest/bin",
   "{{env.HOME}}/.android-sdk/platform-tools",
