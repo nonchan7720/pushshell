@@ -12,6 +12,82 @@ Web アプリを WebView で表示し、プッシュ通知だけをネイティ�
 └── .mise.toml  ツールチェーンとタスク定義 (開発環境の入口)
 ```
 
+## アーキテクチャ
+
+```mermaid
+flowchart LR
+    subgraph Phone["スマホ (pushshell アプリ)"]
+        WV["WebView<br/>WEBAPP_URL を表示"]
+        Native["ネイティブ層 (App.tsx)<br/>bridge / 通知権限 / push token<br/>installationId + loginIds を SecureStore に保持"]
+        WV <-- "postMessage<br/>login / logout / openExternal / getState<br/>⇄ ready / registered / unregistered / notification" --> Native
+    end
+
+    WebApp["Web アプリ<br/>(既存サービス。ログイン等の基本操作はここ)"]
+    WebBE["Web アプリのバックエンド"]
+
+    subgraph Backend["通知バックエンド (Go, backend/)"]
+        API["HTTP API (openapi.yaml)<br/>POST /v1/devices<br/>DELETE /v1/devices/{id}[/logins/{loginId}]<br/>DELETE /v1/logins/{loginId} 🔑<br/>POST /v1/notifications 🔑"]
+        Core["internal/core<br/>Service / Store / validate"]
+        DB[("devices ⟷ device_logins<br/>(多対多)")]
+        Push["internal/push<br/>PUSH_PROVIDER = expo | native | log"]
+        API --> Core --> DB
+        Core --> Push
+    end
+
+    WebApp -- "HTTPS" --> WV
+    WebApp --- WebBE
+    Native -- "端末登録 / 解除" --> API
+    WebBE -- "通知送信・セッション失効<br/>(X-API-Key 🔑)" --> API
+    Push -- "expo" --> Expo["Expo Push Service"]
+    Push -- "native" --> FCM["FCM HTTP v1"]
+    Push -- "native" --> APNs["APNs"]
+    Expo --> Native
+    FCM --> Native
+    APNs --> Native
+```
+
+同じバックエンドを 2 通りで動かせます。
+
+| エントリポイント | 動作環境 | DB | 差分 |
+|---|---|---|---|
+| `cmd/server` | 通常の Go バイナリ (CGO なし) | sqlite / mysql / postgres (`internal/store/entstore`, ent + Atlas migration) | kin-openapi によるフル OpenAPI バリデーション付き |
+| `cmd/worker` | Cloudflare Workers (`GOOS=js GOARCH=wasm`, 約 2.2MB gzip で無料プラン内) | D1 (`internal/store/sqlstore`, 素の `database/sql`) | ent / atlas / kin-openapi をリンクしない。外部 HTTP は `cloudflare/fetch` 経由 |
+
+`internal/core` (ユースケース) と `internal/transport/httpapi` (oapi-codegen 生成サーバーの実装)、`internal/push` は両者で共通です。
+
+### ログインから通知までの流れ
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant W as Web アプリ (WebView 内)
+    participant A as アプリ (ネイティブ層)
+    participant B as 通知バックエンド
+    participant P as Push サービス<br/>(Expo / FCM / APNs)
+    participant S as Web アプリのバックエンド
+
+    A->>W: ready { installationId, loginIds, pushPermission }
+    Note over W: ユーザーがログイン
+    W->>A: postMessage login { loginId }
+    A->>A: 通知権限を要求し push token を取得
+    A->>B: POST /v1/devices { installationId, loginId, pushToken | deviceToken, 端末情報 }
+    B-->>A: 200 Device { loginIds: [...] }
+    A->>W: registered { loginId }
+
+    S->>B: POST /v1/notifications { loginIds, title, body, url }  (X-API-Key)
+    B->>B: loginIds → 端末を引き、同一端末は 1 通に重複排除
+    B->>P: 送信 (無効トークンは端末を自動削除)
+    P-->>A: プッシュ通知
+    B-->>S: 200 { requested, sent, failed, results }
+    Note over A: ユーザーが通知をタップ
+    A->>W: url を WebView で開き notification { data } を通知
+
+    Note over W,S: ログアウト / セッション失効
+    W->>A: postMessage logout { loginId? }
+    A->>B: DELETE /v1/devices/{installationId}/logins/{loginId}
+    S->>B: DELETE /v1/logins/{loginId}  (全端末から解除, X-API-Key)
+```
+
 ## 仕組み
 
 1. アプリは `WEBAPP_URL` を WebView で表示するだけ。基本操作はすべて Web アプリ側。
