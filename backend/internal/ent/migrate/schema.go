@@ -14,7 +14,7 @@ var (
 		{Name: "installation_id", Type: field.TypeString, Unique: true, Size: 128},
 		{Name: "login_id", Type: field.TypeString, Size: 256},
 		{Name: "platform", Type: field.TypeEnum, Enums: []string{"ios", "android"}},
-		{Name: "push_token", Type: field.TypeString, Size: 512},
+		{Name: "push_token", Type: field.TypeString, Nullable: true, Size: 512},
 		{Name: "device_token", Type: field.TypeString, Nullable: true, Size: 4096},
 		{Name: "app_id", Type: field.TypeString, Nullable: true, Size: 256},
 		{Name: "app_version", Type: field.TypeString, Nullable: true, Size: 64},

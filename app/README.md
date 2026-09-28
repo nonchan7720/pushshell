@@ -41,7 +41,8 @@ cp .env.example .env
 | `WEBAPP_URL` | WebView に表示する Web アプリの URL | `https://example.com` |
 | `API_BASE_URL` | バックエンド (Go) の URL | `http://localhost:8080` |
 | `ALLOWED_ORIGINS` | WebView / bridge が許可する origin (カンマ区切り) | `WEBAPP_URL` の origin |
-| `EAS_PROJECT_ID` | EAS の projectId (Expo Push Token の取得に必須) | なし |
+| `EAS_PROJECT_ID` | EAS の projectId (`PUSH_PROVIDER=expo` で Expo Push Token の取得に必須) | なし |
+| `PUSH_PROVIDER` | 通知の配送方式。`expo` (Expo Push Service) か `native` (FCM / APNs をバックエンドが直接叩く)。バックエンドの `PUSH_PROVIDER` と揃える | `expo` |
 | `GOOGLE_SERVICES_JSON` | Android で FCM を使う場合の `google-services.json` パス | なし |
 
 `assets/` に置いてある PNG (icon.png, android-icon-*.png, splash-icon.png, favicon.png) は

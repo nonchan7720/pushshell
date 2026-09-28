@@ -84,6 +84,12 @@ func (_u *DeviceUpdate) SetNillablePushToken(v *string) *DeviceUpdate {
 	return _u
 }
 
+// ClearPushToken clears the value of the "push_token" field.
+func (_u *DeviceUpdate) ClearPushToken() *DeviceUpdate {
+	_u.mutation.ClearPushToken()
+	return _u
+}
+
 // SetDeviceToken sets the "device_token" field.
 func (_u *DeviceUpdate) SetDeviceToken(v string) *DeviceUpdate {
 	_u.mutation.SetDeviceToken(v)
@@ -355,6 +361,9 @@ func (_u *DeviceUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	if value, ok := _u.mutation.PushToken(); ok {
 		_spec.SetField(device.FieldPushToken, field.TypeString, value)
 	}
+	if _u.mutation.PushTokenCleared() {
+		_spec.ClearField(device.FieldPushToken, field.TypeString)
+	}
 	if value, ok := _u.mutation.DeviceToken(); ok {
 		_spec.SetField(device.FieldDeviceToken, field.TypeString, value)
 	}
@@ -473,6 +482,12 @@ func (_u *DeviceUpdateOne) SetNillablePushToken(v *string) *DeviceUpdateOne {
 	if v != nil {
 		_u.SetPushToken(*v)
 	}
+	return _u
+}
+
+// ClearPushToken clears the value of the "push_token" field.
+func (_u *DeviceUpdateOne) ClearPushToken() *DeviceUpdateOne {
+	_u.mutation.ClearPushToken()
 	return _u
 }
 
@@ -776,6 +791,9 @@ func (_u *DeviceUpdateOne) sqlSave(ctx context.Context) (_node *Device, err erro
 	}
 	if value, ok := _u.mutation.PushToken(); ok {
 		_spec.SetField(device.FieldPushToken, field.TypeString, value)
+	}
+	if _u.mutation.PushTokenCleared() {
+		_spec.ClearField(device.FieldPushToken, field.TypeString)
 	}
 	if value, ok := _u.mutation.DeviceToken(); ok {
 		_spec.SetField(device.FieldDeviceToken, field.TypeString, value)

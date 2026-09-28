@@ -119,9 +119,12 @@ export default function App() {
         const permission: PushPermissionStatus = await ensurePushPermission();
         const tokens = await getPushTokens();
 
-        if (permission !== "granted" || !tokens.expoPushToken) {
+        // 配送方式ごとに必要なトークンが揃っているか確認する。
+        const token =
+          config.pushProvider === "native" ? tokens.devicePushToken : tokens.expoPushToken;
+        if (permission !== "granted" || !token) {
           throw new Error(
-            `プッシュ通知の権限またはトークンが取得できません (permission=${permission})`,
+            `プッシュ通知の権限またはトークンが取得できません (permission=${permission}, provider=${config.pushProvider})`,
           );
         }
 

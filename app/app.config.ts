@@ -47,6 +47,14 @@ const API_BASE_URL = env("API_BASE_URL", "http://localhost:8080")!;
 // Expo Push Token の取得に必要 (未設定だと getExpoPushTokenAsync が失敗する)。
 const EAS_PROJECT_ID = env("EAS_PROJECT_ID");
 
+// 通知の配送方式。バックエンドの PUSH_PROVIDER と揃える。
+//   expo:   Expo Push Token を登録する (EAS_PROJECT_ID が必要)
+//   native: FCM / APNs のネイティブトークンだけを登録する (Expo のプロジェクト不要)
+const PUSH_PROVIDER = env("PUSH_PROVIDER", "expo")!;
+if (PUSH_PROVIDER !== "expo" && PUSH_PROVIDER !== "native") {
+  throw new Error(`PUSH_PROVIDER は expo か native を指定してください (got: ${PUSH_PROVIDER})`);
+}
+
 // google-services.json のパス (Android で FCM を使う場合)。
 const GOOGLE_SERVICES_JSON = env("GOOGLE_SERVICES_JSON");
 
@@ -139,6 +147,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     apiBaseUrl: API_BASE_URL,
     allowedOrigins: ALLOWED_ORIGINS,
     appVersion: APP_VERSION,
+    pushProvider: PUSH_PROVIDER,
     ...(EAS_PROJECT_ID ? { eas: { projectId: EAS_PROJECT_ID } } : {}),
   },
 });

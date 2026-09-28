@@ -8,8 +8,12 @@ export interface AppExtra {
   apiBaseUrl: string;
   allowedOrigins: string[];
   appVersion: string;
+  pushProvider: PushProvider;
   eas?: { projectId?: string };
 }
+
+/** 通知の配送方式 (バックエンドの PUSH_PROVIDER と対応)。 */
+export type PushProvider = "expo" | "native";
 
 const extra = (Constants.expoConfig?.extra ?? {}) as Partial<AppExtra>;
 
@@ -28,6 +32,7 @@ export const config = {
   apiBaseUrl: requireExtra(extra.apiBaseUrl, "apiBaseUrl"),
   allowedOrigins: extra.allowedOrigins ?? [],
   appVersion: extra.appVersion ?? "1.0.0",
+  pushProvider: (extra.pushProvider === "native" ? "native" : "expo") as PushProvider,
   // Expo Push Token の取得に必要な projectId。
   // extra.eas.projectId (app.config.ts 経由) か、EAS Build が埋め込む
   // Constants.easConfig のどちらかにある。

@@ -196,7 +196,11 @@ components:
 
     DeviceRegistration:
       type: object
-      required: [loginId, installationId, platform, pushToken]
+      description: |
+        `pushToken` (Expo Push Token) と `deviceToken` (FCM / APNs のネイティブトークン) は
+        どちらか一方以上が必須。バックエンドの `PUSH_PROVIDER` が `expo` なら pushToken、
+        `native` なら deviceToken が送信に使われる。
+      required: [loginId, installationId, platform]
       properties:
         loginId:
           type: string
@@ -212,12 +216,13 @@ components:
           $ref: "#/components/schemas/Platform"
         pushToken:
           type: string
-          description: Expo Push Token (`ExponentPushToken[...]`)
+          description: Expo Push Token (`ExponentPushToken[...]`)。`PUSH_PROVIDER=expo` で使う
           minLength: 1
           maxLength: 512
         deviceToken:
           type: string
-          description: ネイティブのデバイストークン (APNs / FCM)。FCM/APNs を直接叩く場合に使う
+          description: ネイティブのデバイストークン (Android は FCM registration token、iOS は APNs device token の hex)。`PUSH_PROVIDER=native` で使う
+          minLength: 1
           maxLength: 4096
         appId:
           type: string

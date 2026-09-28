@@ -289,9 +289,22 @@ func (m *DeviceMutation) OldPushToken(ctx context.Context) (v string, err error)
 	return oldValue.PushToken, nil
 }
 
+// ClearPushToken clears the value of the "push_token" field.
+func (m *DeviceMutation) ClearPushToken() {
+	m.push_token = nil
+	m.clearedFields[device.FieldPushToken] = struct{}{}
+}
+
+// PushTokenCleared returns if the "push_token" field was cleared in this mutation.
+func (m *DeviceMutation) PushTokenCleared() bool {
+	_, ok := m.clearedFields[device.FieldPushToken]
+	return ok
+}
+
 // ResetPushToken resets all changes to the "push_token" field.
 func (m *DeviceMutation) ResetPushToken() {
 	m.push_token = nil
+	delete(m.clearedFields, device.FieldPushToken)
 }
 
 // SetDeviceToken sets the "device_token" field.
@@ -982,6 +995,9 @@ func (m *DeviceMutation) AddField(name string, value ent.Value) error {
 // mutation.
 func (m *DeviceMutation) ClearedFields() []string {
 	var fields []string
+	if m.FieldCleared(device.FieldPushToken) {
+		fields = append(fields, device.FieldPushToken)
+	}
 	if m.FieldCleared(device.FieldDeviceToken) {
 		fields = append(fields, device.FieldDeviceToken)
 	}
@@ -1017,6 +1033,9 @@ func (m *DeviceMutation) FieldCleared(name string) bool {
 // error if the field is not defined in the schema.
 func (m *DeviceMutation) ClearField(name string) error {
 	switch name {
+	case device.FieldPushToken:
+		m.ClearPushToken()
+		return nil
 	case device.FieldDeviceToken:
 		m.ClearDeviceToken()
 		return nil

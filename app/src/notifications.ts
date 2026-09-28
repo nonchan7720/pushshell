@@ -75,26 +75,28 @@ export interface PushTokens {
 }
 
 /**
- * Expo Push Token (バックエンドが Expo Push API に投げる用) と、
- * ネイティブの device push token (参考情報。FCM/APNs を直接叩く場合用) を取得する。
- * 権限が無い/取得に失敗した場合は該当フィールドを undefined にする。
+ * 配送方式に応じたトークンを取得する。
+ * - `expo`:   Expo Push Token (バックエンドが Expo Push API に投げる) + ネイティブトークン (参考)
+ * - `native`: ネイティブの device push token (FCM registration token / APNs device token) のみ
+ * 取得に失敗した場合は該当フィールドを undefined にする。
  */
 export async function getPushTokens(): Promise<PushTokens> {
-  const projectId = config.easProjectId;
-  if (!projectId) {
-    // Expo Push Token の取得には EAS の projectId が必須。
-    throw new Error(
-      "Expo Push Token を取得するには EAS_PROJECT_ID (app.config.ts の extra.eas.projectId) が必要です。" +
-        " `eas init` 等でプロジェクトを作成し、EAS_PROJECT_ID を設定してください。",
-    );
-  }
-
   let expoPushToken: string | undefined;
-  try {
-    const result = await Notifications.getExpoPushTokenAsync({ projectId });
-    expoPushToken = result.data;
-  } catch (error) {
-    console.warn("[notifications] getExpoPushTokenAsync に失敗しました:", error);
+  if (config.pushProvider === "expo") {
+    const projectId = config.easProjectId;
+    if (!projectId) {
+      // Expo Push Token の取得には EAS の projectId が必須。
+      throw new Error(
+        "Expo Push Token を取得するには EAS_PROJECT_ID (app.config.ts の extra.eas.projectId) が必要です。" +
+          " `eas init` 等でプロジェクトを作成し EAS_PROJECT_ID を設定するか、PUSH_PROVIDER=native にしてください。",
+      );
+    }
+    try {
+      const result = await Notifications.getExpoPushTokenAsync({ projectId });
+      expoPushToken = result.data;
+    } catch (error) {
+      console.warn("[notifications] getExpoPushTokenAsync に失敗しました:", error);
+    }
   }
 
   let devicePushToken: string | undefined;
@@ -115,7 +117,7 @@ export async function getPushTokens(): Promise<PushTokens> {
 export function buildDeviceRegistration(params: {
   loginId: string;
   installationId: string;
-  expoPushToken: string;
+  expoPushToken?: string;
   devicePushToken?: string;
 }): DeviceRegistration {
   const platform: DeviceRegistration["platform"] = Platform.OS === "ios" ? "ios" : "android";
@@ -124,6 +126,7 @@ export function buildDeviceRegistration(params: {
     loginId: params.loginId,
     installationId: params.installationId,
     platform,
+    // どちらか一方以上が必須 (OpenAPI 参照)。expo なら pushToken、native なら deviceToken が使われる。
     pushToken: params.expoPushToken,
     deviceToken: params.devicePushToken,
     appId: Application.applicationId ?? undefined,

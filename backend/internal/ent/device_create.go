@@ -46,6 +46,14 @@ func (_c *DeviceCreate) SetPushToken(v string) *DeviceCreate {
 	return _c
 }
 
+// SetNillablePushToken sets the "push_token" field if the given value is not nil.
+func (_c *DeviceCreate) SetNillablePushToken(v *string) *DeviceCreate {
+	if v != nil {
+		_c.SetPushToken(*v)
+	}
+	return _c
+}
+
 // SetDeviceToken sets the "device_token" field.
 func (_c *DeviceCreate) SetDeviceToken(v string) *DeviceCreate {
 	_c.mutation.SetDeviceToken(v)
@@ -242,9 +250,6 @@ func (_c *DeviceCreate) check() error {
 		if err := device.PlatformValidator(v); err != nil {
 			return &ValidationError{Name: "platform", err: fmt.Errorf(`ent: validator failed for field "Device.platform": %w`, err)}
 		}
-	}
-	if _, ok := _c.mutation.PushToken(); !ok {
-		return &ValidationError{Name: "push_token", err: errors.New(`ent: missing required field "Device.push_token"`)}
 	}
 	if v, ok := _c.mutation.PushToken(); ok {
 		if err := device.PushTokenValidator(v); err != nil {
@@ -468,6 +473,12 @@ func (u *DeviceUpsert) SetPushToken(v string) *DeviceUpsert {
 // UpdatePushToken sets the "push_token" field to the value that was provided on create.
 func (u *DeviceUpsert) UpdatePushToken() *DeviceUpsert {
 	u.SetExcluded(device.FieldPushToken)
+	return u
+}
+
+// ClearPushToken clears the value of the "push_token" field.
+func (u *DeviceUpsert) ClearPushToken() *DeviceUpsert {
+	u.SetNull(device.FieldPushToken)
 	return u
 }
 
@@ -707,6 +718,13 @@ func (u *DeviceUpsertOne) SetPushToken(v string) *DeviceUpsertOne {
 func (u *DeviceUpsertOne) UpdatePushToken() *DeviceUpsertOne {
 	return u.Update(func(s *DeviceUpsert) {
 		s.UpdatePushToken()
+	})
+}
+
+// ClearPushToken clears the value of the "push_token" field.
+func (u *DeviceUpsertOne) ClearPushToken() *DeviceUpsertOne {
+	return u.Update(func(s *DeviceUpsert) {
+		s.ClearPushToken()
 	})
 }
 
@@ -1135,6 +1153,13 @@ func (u *DeviceUpsertBulk) SetPushToken(v string) *DeviceUpsertBulk {
 func (u *DeviceUpsertBulk) UpdatePushToken() *DeviceUpsertBulk {
 	return u.Update(func(s *DeviceUpsert) {
 		s.UpdatePushToken()
+	})
+}
+
+// ClearPushToken clears the value of the "push_token" field.
+func (u *DeviceUpsertBulk) ClearPushToken() *DeviceUpsertBulk {
+	return u.Update(func(s *DeviceUpsert) {
+		s.ClearPushToken()
 	})
 }
 

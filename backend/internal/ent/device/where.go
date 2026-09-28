@@ -319,6 +319,16 @@ func PushTokenHasSuffix(v string) predicate.Device {
 	return predicate.Device(sql.FieldHasSuffix(FieldPushToken, v))
 }
 
+// PushTokenIsNil applies the IsNil predicate on the "push_token" field.
+func PushTokenIsNil() predicate.Device {
+	return predicate.Device(sql.FieldIsNull(FieldPushToken))
+}
+
+// PushTokenNotNil applies the NotNil predicate on the "push_token" field.
+func PushTokenNotNil() predicate.Device {
+	return predicate.Device(sql.FieldNotNull(FieldPushToken))
+}
+
 // PushTokenEqualFold applies the EqualFold predicate on the "push_token" field.
 func PushTokenEqualFold(v string) predicate.Device {
 	return predicate.Device(sql.FieldEqualFold(FieldPushToken, v))

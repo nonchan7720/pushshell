@@ -98,15 +98,20 @@ export interface components {
         };
         /** @enum {string} */
         Platform: "ios" | "android";
+        /**
+         * @description `pushToken` (Expo Push Token) と `deviceToken` (FCM / APNs のネイティブトークン) は
+         *     どちらか一方以上が必須。バックエンドの `PUSH_PROVIDER` が `expo` なら pushToken、
+         *     `native` なら deviceToken が送信に使われる。
+         */
         DeviceRegistration: {
             /** @description Web アプリのログイン ID (postMessage で受け取ったもの) */
             loginId: string;
             /** @description アプリインストールごとに生成される安定した ID */
             installationId: string;
             platform: components["schemas"]["Platform"];
-            /** @description Expo Push Token (`ExponentPushToken[...]`) */
-            pushToken: string;
-            /** @description ネイティブのデバイストークン (APNs / FCM)。FCM/APNs を直接叩く場合に使う */
+            /** @description Expo Push Token (`ExponentPushToken[...]`)。`PUSH_PROVIDER=expo` で使う */
+            pushToken?: string;
+            /** @description ネイティブのデバイストークン (Android は FCM registration token、iOS は APNs device token の hex)。`PUSH_PROVIDER=native` で使う */
             deviceToken?: string;
             /** @description バンドル ID / パッケージ名 */
             appId?: string;

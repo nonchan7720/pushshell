@@ -31,6 +31,7 @@ func (Device) Fields() []ent.Field {
 		field.String("push_token").
 			MaxLen(512).
 			NotEmpty().
+			Optional().
 			Comment("Expo Push Token"),
 		field.String("device_token").
 			MaxLen(4096).
