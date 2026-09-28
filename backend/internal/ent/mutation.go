@@ -12,6 +12,7 @@ import (
 	"entgo.io/ent"
 	"entgo.io/ent/dialect/sql"
 	"github.com/nonchan7720/webapp-notification/backend/internal/ent/device"
+	"github.com/nonchan7720/webapp-notification/backend/internal/ent/devicelogin"
 	"github.com/nonchan7720/webapp-notification/backend/internal/ent/predicate"
 )
 
@@ -24,7 +25,8 @@ const (
 	OpUpdateOne = ent.OpUpdateOne
 
 	// Node types.
-	TypeDevice = "Device"
+	TypeDevice      = "Device"
+	TypeDeviceLogin = "DeviceLogin"
 )
 
 // DeviceMutation represents an operation that mutates the Device nodes in the graph.
@@ -34,7 +36,6 @@ type DeviceMutation struct {
 	typ             string
 	id              *int
 	installation_id *string
-	login_id        *string
 	platform        *device.Platform
 	push_token      *string
 	device_token    *string
@@ -47,6 +48,9 @@ type DeviceMutation struct {
 	created_at      *time.Time
 	updated_at      *time.Time
 	clearedFields   map[string]struct{}
+	logins          map[int]struct{}
+	removedlogins   map[int]struct{}
+	clearedlogins   bool
 	done            bool
 	oldValue        func(context.Context) (*Device, error)
 	predicates      []predicate.Device
@@ -184,42 +188,6 @@ func (m *DeviceMutation) OldInstallationID(ctx context.Context) (v string, err e
 // ResetInstallationID resets all changes to the "installation_id" field.
 func (m *DeviceMutation) ResetInstallationID() {
 	m.installation_id = nil
-}
-
-// SetLoginID sets the "login_id" field.
-func (m *DeviceMutation) SetLoginID(s string) {
-	m.login_id = &s
-}
-
-// LoginID returns the value of the "login_id" field in the mutation.
-func (m *DeviceMutation) LoginID() (r string, exists bool) {
-	v := m.login_id
-	if v == nil {
-		return
-	}
-	return *v, true
-}
-
-// OldLoginID returns the old "login_id" field's value of the Device entity.
-// If the Device object wasn't provided to the builder, the object is fetched from the database.
-// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
-func (m *DeviceMutation) OldLoginID(ctx context.Context) (v string, err error) {
-	if !m.op.Is(OpUpdateOne) {
-		return v, errors.New("OldLoginID is only allowed on UpdateOne operations")
-	}
-	if m.id == nil || m.oldValue == nil {
-		return v, errors.New("OldLoginID requires an ID field in the mutation")
-	}
-	oldValue, err := m.oldValue(ctx)
-	if err != nil {
-		return v, fmt.Errorf("querying old value for OldLoginID: %w", err)
-	}
-	return oldValue.LoginID, nil
-}
-
-// ResetLoginID resets all changes to the "login_id" field.
-func (m *DeviceMutation) ResetLoginID() {
-	m.login_id = nil
 }
 
 // SetPlatform sets the "platform" field.
@@ -722,6 +690,60 @@ func (m *DeviceMutation) ResetUpdatedAt() {
 	m.updated_at = nil
 }
 
+// AddLoginIDs adds the "logins" edge to the DeviceLogin entity by ids.
+func (m *DeviceMutation) AddLoginIDs(ids ...int) {
+	if m.logins == nil {
+		m.logins = make(map[int]struct{})
+	}
+	for i := range ids {
+		m.logins[ids[i]] = struct{}{}
+	}
+}
+
+// ClearLogins clears the "logins" edge to the DeviceLogin entity.
+func (m *DeviceMutation) ClearLogins() {
+	m.clearedlogins = true
+}
+
+// LoginsCleared reports if the "logins" edge to the DeviceLogin entity was cleared.
+func (m *DeviceMutation) LoginsCleared() bool {
+	return m.clearedlogins
+}
+
+// RemoveLoginIDs removes the "logins" edge to the DeviceLogin entity by IDs.
+func (m *DeviceMutation) RemoveLoginIDs(ids ...int) {
+	if m.removedlogins == nil {
+		m.removedlogins = make(map[int]struct{})
+	}
+	for i := range ids {
+		delete(m.logins, ids[i])
+		m.removedlogins[ids[i]] = struct{}{}
+	}
+}
+
+// RemovedLogins returns the removed IDs of the "logins" edge to the DeviceLogin entity.
+func (m *DeviceMutation) RemovedLoginsIDs() (ids []int) {
+	for id := range m.removedlogins {
+		ids = append(ids, id)
+	}
+	return
+}
+
+// LoginsIDs returns the "logins" edge IDs in the mutation.
+func (m *DeviceMutation) LoginsIDs() (ids []int) {
+	for id := range m.logins {
+		ids = append(ids, id)
+	}
+	return
+}
+
+// ResetLogins resets all changes to the "logins" edge.
+func (m *DeviceMutation) ResetLogins() {
+	m.logins = nil
+	m.clearedlogins = false
+	m.removedlogins = nil
+}
+
 // Where appends a list predicates to the DeviceMutation builder.
 func (m *DeviceMutation) Where(ps ...predicate.Device) {
 	m.predicates = append(m.predicates, ps...)
@@ -756,12 +778,9 @@ func (m *DeviceMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *DeviceMutation) Fields() []string {
-	fields := make([]string, 0, 13)
+	fields := make([]string, 0, 12)
 	if m.installation_id != nil {
 		fields = append(fields, device.FieldInstallationID)
-	}
-	if m.login_id != nil {
-		fields = append(fields, device.FieldLoginID)
 	}
 	if m.platform != nil {
 		fields = append(fields, device.FieldPlatform)
@@ -806,8 +825,6 @@ func (m *DeviceMutation) Field(name string) (ent.Value, bool) {
 	switch name {
 	case device.FieldInstallationID:
 		return m.InstallationID()
-	case device.FieldLoginID:
-		return m.LoginID()
 	case device.FieldPlatform:
 		return m.Platform()
 	case device.FieldPushToken:
@@ -841,8 +858,6 @@ func (m *DeviceMutation) OldField(ctx context.Context, name string) (ent.Value, 
 	switch name {
 	case device.FieldInstallationID:
 		return m.OldInstallationID(ctx)
-	case device.FieldLoginID:
-		return m.OldLoginID(ctx)
 	case device.FieldPlatform:
 		return m.OldPlatform(ctx)
 	case device.FieldPushToken:
@@ -880,13 +895,6 @@ func (m *DeviceMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetInstallationID(v)
-		return nil
-	case device.FieldLoginID:
-		v, ok := value.(string)
-		if !ok {
-			return fmt.Errorf("unexpected type %T for field %s", value, name)
-		}
-		m.SetLoginID(v)
 		return nil
 	case device.FieldPlatform:
 		v, ok := value.(device.Platform)
@@ -1068,9 +1076,6 @@ func (m *DeviceMutation) ResetField(name string) error {
 	case device.FieldInstallationID:
 		m.ResetInstallationID()
 		return nil
-	case device.FieldLoginID:
-		m.ResetLoginID()
-		return nil
 	case device.FieldPlatform:
 		m.ResetPlatform()
 		return nil
@@ -1110,48 +1115,531 @@ func (m *DeviceMutation) ResetField(name string) error {
 
 // AddedEdges returns all edge names that were set/added in this mutation.
 func (m *DeviceMutation) AddedEdges() []string {
-	edges := make([]string, 0, 0)
+	edges := make([]string, 0, 1)
+	if m.logins != nil {
+		edges = append(edges, device.EdgeLogins)
+	}
 	return edges
 }
 
 // AddedIDs returns all IDs (to other nodes) that were added for the given edge
 // name in this mutation.
 func (m *DeviceMutation) AddedIDs(name string) []ent.Value {
+	switch name {
+	case device.EdgeLogins:
+		ids := make([]ent.Value, 0, len(m.logins))
+		for id := range m.logins {
+			ids = append(ids, id)
+		}
+		return ids
+	}
 	return nil
 }
 
 // RemovedEdges returns all edge names that were removed in this mutation.
 func (m *DeviceMutation) RemovedEdges() []string {
-	edges := make([]string, 0, 0)
+	edges := make([]string, 0, 1)
+	if m.removedlogins != nil {
+		edges = append(edges, device.EdgeLogins)
+	}
 	return edges
 }
 
 // RemovedIDs returns all IDs (to other nodes) that were removed for the edge with
 // the given name in this mutation.
 func (m *DeviceMutation) RemovedIDs(name string) []ent.Value {
+	switch name {
+	case device.EdgeLogins:
+		ids := make([]ent.Value, 0, len(m.removedlogins))
+		for id := range m.removedlogins {
+			ids = append(ids, id)
+		}
+		return ids
+	}
 	return nil
 }
 
 // ClearedEdges returns all edge names that were cleared in this mutation.
 func (m *DeviceMutation) ClearedEdges() []string {
-	edges := make([]string, 0, 0)
+	edges := make([]string, 0, 1)
+	if m.clearedlogins {
+		edges = append(edges, device.EdgeLogins)
+	}
 	return edges
 }
 
 // EdgeCleared returns a boolean which indicates if the edge with the given name
 // was cleared in this mutation.
 func (m *DeviceMutation) EdgeCleared(name string) bool {
+	switch name {
+	case device.EdgeLogins:
+		return m.clearedlogins
+	}
 	return false
 }
 
 // ClearEdge clears the value of the edge with the given name. It returns an error
 // if that edge is not defined in the schema.
 func (m *DeviceMutation) ClearEdge(name string) error {
+	switch name {
+	}
 	return fmt.Errorf("unknown Device unique edge %s", name)
 }
 
 // ResetEdge resets all changes to the edge with the given name in this mutation.
 // It returns an error if the edge is not defined in the schema.
 func (m *DeviceMutation) ResetEdge(name string) error {
+	switch name {
+	case device.EdgeLogins:
+		m.ResetLogins()
+		return nil
+	}
 	return fmt.Errorf("unknown Device edge %s", name)
+}
+
+// DeviceLoginMutation represents an operation that mutates the DeviceLogin nodes in the graph.
+type DeviceLoginMutation struct {
+	config
+	op            Op
+	typ           string
+	id            *int
+	login_id      *string
+	created_at    *time.Time
+	clearedFields map[string]struct{}
+	device        *int
+	cleareddevice bool
+	done          bool
+	oldValue      func(context.Context) (*DeviceLogin, error)
+	predicates    []predicate.DeviceLogin
+}
+
+var _ ent.Mutation = (*DeviceLoginMutation)(nil)
+
+// deviceloginOption allows management of the mutation configuration using functional options.
+type deviceloginOption func(*DeviceLoginMutation)
+
+// newDeviceLoginMutation creates new mutation for the DeviceLogin entity.
+func newDeviceLoginMutation(c config, op Op, opts ...deviceloginOption) *DeviceLoginMutation {
+	m := &DeviceLoginMutation{
+		config:        c,
+		op:            op,
+		typ:           TypeDeviceLogin,
+		clearedFields: make(map[string]struct{}),
+	}
+	for _, opt := range opts {
+		opt(m)
+	}
+	return m
+}
+
+// withDeviceLoginID sets the ID field of the mutation.
+func withDeviceLoginID(id int) deviceloginOption {
+	return func(m *DeviceLoginMutation) {
+		var (
+			err   error
+			once  sync.Once
+			value *DeviceLogin
+		)
+		m.oldValue = func(ctx context.Context) (*DeviceLogin, error) {
+			once.Do(func() {
+				if m.done {
+					err = errors.New("querying old values post mutation is not allowed")
+				} else {
+					value, err = m.Client().DeviceLogin.Get(ctx, id)
+				}
+			})
+			return value, err
+		}
+		m.id = &id
+	}
+}
+
+// withDeviceLogin sets the old DeviceLogin of the mutation.
+func withDeviceLogin(node *DeviceLogin) deviceloginOption {
+	return func(m *DeviceLoginMutation) {
+		m.oldValue = func(context.Context) (*DeviceLogin, error) {
+			return node, nil
+		}
+		m.id = &node.ID
+	}
+}
+
+// Client returns a new `ent.Client` from the mutation. If the mutation was
+// executed in a transaction (ent.Tx), a transactional client is returned.
+func (m DeviceLoginMutation) Client() *Client {
+	client := &Client{config: m.config}
+	client.init()
+	return client
+}
+
+// Tx returns an `ent.Tx` for mutations that were executed in transactions;
+// it returns an error otherwise.
+func (m DeviceLoginMutation) Tx() (*Tx, error) {
+	if _, ok := m.driver.(*txDriver); !ok {
+		return nil, errors.New("ent: mutation is not running in a transaction")
+	}
+	tx := &Tx{config: m.config}
+	tx.init()
+	return tx, nil
+}
+
+// ID returns the ID value in the mutation. Note that the ID is only available
+// if it was provided to the builder or after it was returned from the database.
+func (m *DeviceLoginMutation) ID() (id int, exists bool) {
+	if m.id == nil {
+		return
+	}
+	return *m.id, true
+}
+
+// IDs queries the database and returns the entity ids that match the mutation's predicate.
+// That means, if the mutation is applied within a transaction with an isolation level such
+// as sql.LevelSerializable, the returned ids match the ids of the rows that will be updated
+// or updated by the mutation.
+func (m *DeviceLoginMutation) IDs(ctx context.Context) ([]int, error) {
+	switch {
+	case m.op.Is(OpUpdateOne | OpDeleteOne):
+		id, exists := m.ID()
+		if exists {
+			return []int{id}, nil
+		}
+		fallthrough
+	case m.op.Is(OpUpdate | OpDelete):
+		return m.Client().DeviceLogin.Query().Where(m.predicates...).IDs(ctx)
+	default:
+		return nil, fmt.Errorf("IDs is not allowed on %s operations", m.op)
+	}
+}
+
+// SetLoginID sets the "login_id" field.
+func (m *DeviceLoginMutation) SetLoginID(s string) {
+	m.login_id = &s
+}
+
+// LoginID returns the value of the "login_id" field in the mutation.
+func (m *DeviceLoginMutation) LoginID() (r string, exists bool) {
+	v := m.login_id
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldLoginID returns the old "login_id" field's value of the DeviceLogin entity.
+// If the DeviceLogin object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *DeviceLoginMutation) OldLoginID(ctx context.Context) (v string, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldLoginID is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldLoginID requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldLoginID: %w", err)
+	}
+	return oldValue.LoginID, nil
+}
+
+// ResetLoginID resets all changes to the "login_id" field.
+func (m *DeviceLoginMutation) ResetLoginID() {
+	m.login_id = nil
+}
+
+// SetCreatedAt sets the "created_at" field.
+func (m *DeviceLoginMutation) SetCreatedAt(t time.Time) {
+	m.created_at = &t
+}
+
+// CreatedAt returns the value of the "created_at" field in the mutation.
+func (m *DeviceLoginMutation) CreatedAt() (r time.Time, exists bool) {
+	v := m.created_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldCreatedAt returns the old "created_at" field's value of the DeviceLogin entity.
+// If the DeviceLogin object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *DeviceLoginMutation) OldCreatedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldCreatedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldCreatedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldCreatedAt: %w", err)
+	}
+	return oldValue.CreatedAt, nil
+}
+
+// ResetCreatedAt resets all changes to the "created_at" field.
+func (m *DeviceLoginMutation) ResetCreatedAt() {
+	m.created_at = nil
+}
+
+// SetDeviceID sets the "device" edge to the Device entity by id.
+func (m *DeviceLoginMutation) SetDeviceID(id int) {
+	m.device = &id
+}
+
+// ClearDevice clears the "device" edge to the Device entity.
+func (m *DeviceLoginMutation) ClearDevice() {
+	m.cleareddevice = true
+}
+
+// DeviceCleared reports if the "device" edge to the Device entity was cleared.
+func (m *DeviceLoginMutation) DeviceCleared() bool {
+	return m.cleareddevice
+}
+
+// DeviceID returns the "device" edge ID in the mutation.
+func (m *DeviceLoginMutation) DeviceID() (id int, exists bool) {
+	if m.device != nil {
+		return *m.device, true
+	}
+	return
+}
+
+// DeviceIDs returns the "device" edge IDs in the mutation.
+// Note that IDs always returns len(IDs) <= 1 for unique edges, and you should use
+// DeviceID instead. It exists only for internal usage by the builders.
+func (m *DeviceLoginMutation) DeviceIDs() (ids []int) {
+	if id := m.device; id != nil {
+		ids = append(ids, *id)
+	}
+	return
+}
+
+// ResetDevice resets all changes to the "device" edge.
+func (m *DeviceLoginMutation) ResetDevice() {
+	m.device = nil
+	m.cleareddevice = false
+}
+
+// Where appends a list predicates to the DeviceLoginMutation builder.
+func (m *DeviceLoginMutation) Where(ps ...predicate.DeviceLogin) {
+	m.predicates = append(m.predicates, ps...)
+}
+
+// WhereP appends storage-level predicates to the DeviceLoginMutation builder. Using this method,
+// users can use type-assertion to append predicates that do not depend on any generated package.
+func (m *DeviceLoginMutation) WhereP(ps ...func(*sql.Selector)) {
+	p := make([]predicate.DeviceLogin, len(ps))
+	for i := range ps {
+		p[i] = ps[i]
+	}
+	m.Where(p...)
+}
+
+// Op returns the operation name.
+func (m *DeviceLoginMutation) Op() Op {
+	return m.op
+}
+
+// SetOp allows setting the mutation operation.
+func (m *DeviceLoginMutation) SetOp(op Op) {
+	m.op = op
+}
+
+// Type returns the node type of this mutation (DeviceLogin).
+func (m *DeviceLoginMutation) Type() string {
+	return m.typ
+}
+
+// Fields returns all fields that were changed during this mutation. Note that in
+// order to get all numeric fields that were incremented/decremented, call
+// AddedFields().
+func (m *DeviceLoginMutation) Fields() []string {
+	fields := make([]string, 0, 2)
+	if m.login_id != nil {
+		fields = append(fields, devicelogin.FieldLoginID)
+	}
+	if m.created_at != nil {
+		fields = append(fields, devicelogin.FieldCreatedAt)
+	}
+	return fields
+}
+
+// Field returns the value of a field with the given name. The second boolean
+// return value indicates that this field was not set, or was not defined in the
+// schema.
+func (m *DeviceLoginMutation) Field(name string) (ent.Value, bool) {
+	switch name {
+	case devicelogin.FieldLoginID:
+		return m.LoginID()
+	case devicelogin.FieldCreatedAt:
+		return m.CreatedAt()
+	}
+	return nil, false
+}
+
+// OldField returns the old value of the field from the database. An error is
+// returned if the mutation operation is not UpdateOne, or the query to the
+// database failed.
+func (m *DeviceLoginMutation) OldField(ctx context.Context, name string) (ent.Value, error) {
+	switch name {
+	case devicelogin.FieldLoginID:
+		return m.OldLoginID(ctx)
+	case devicelogin.FieldCreatedAt:
+		return m.OldCreatedAt(ctx)
+	}
+	return nil, fmt.Errorf("unknown DeviceLogin field %s", name)
+}
+
+// SetField sets the value of a field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *DeviceLoginMutation) SetField(name string, value ent.Value) error {
+	switch name {
+	case devicelogin.FieldLoginID:
+		v, ok := value.(string)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetLoginID(v)
+		return nil
+	case devicelogin.FieldCreatedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetCreatedAt(v)
+		return nil
+	}
+	return fmt.Errorf("unknown DeviceLogin field %s", name)
+}
+
+// AddedFields returns all numeric fields that were incremented/decremented during
+// this mutation.
+func (m *DeviceLoginMutation) AddedFields() []string {
+	return nil
+}
+
+// AddedField returns the numeric value that was incremented/decremented on a field
+// with the given name. The second boolean return value indicates that this field
+// was not set, or was not defined in the schema.
+func (m *DeviceLoginMutation) AddedField(name string) (ent.Value, bool) {
+	return nil, false
+}
+
+// AddField adds the value to the field with the given name. It returns an error if
+// the field is not defined in the schema, or if the type mismatched the field
+// type.
+func (m *DeviceLoginMutation) AddField(name string, value ent.Value) error {
+	switch name {
+	}
+	return fmt.Errorf("unknown DeviceLogin numeric field %s", name)
+}
+
+// ClearedFields returns all nullable fields that were cleared during this
+// mutation.
+func (m *DeviceLoginMutation) ClearedFields() []string {
+	return nil
+}
+
+// FieldCleared returns a boolean indicating if a field with the given name was
+// cleared in this mutation.
+func (m *DeviceLoginMutation) FieldCleared(name string) bool {
+	_, ok := m.clearedFields[name]
+	return ok
+}
+
+// ClearField clears the value of the field with the given name. It returns an
+// error if the field is not defined in the schema.
+func (m *DeviceLoginMutation) ClearField(name string) error {
+	return fmt.Errorf("unknown DeviceLogin nullable field %s", name)
+}
+
+// ResetField resets all changes in the mutation for the field with the given name.
+// It returns an error if the field is not defined in the schema.
+func (m *DeviceLoginMutation) ResetField(name string) error {
+	switch name {
+	case devicelogin.FieldLoginID:
+		m.ResetLoginID()
+		return nil
+	case devicelogin.FieldCreatedAt:
+		m.ResetCreatedAt()
+		return nil
+	}
+	return fmt.Errorf("unknown DeviceLogin field %s", name)
+}
+
+// AddedEdges returns all edge names that were set/added in this mutation.
+func (m *DeviceLoginMutation) AddedEdges() []string {
+	edges := make([]string, 0, 1)
+	if m.device != nil {
+		edges = append(edges, devicelogin.EdgeDevice)
+	}
+	return edges
+}
+
+// AddedIDs returns all IDs (to other nodes) that were added for the given edge
+// name in this mutation.
+func (m *DeviceLoginMutation) AddedIDs(name string) []ent.Value {
+	switch name {
+	case devicelogin.EdgeDevice:
+		if id := m.device; id != nil {
+			return []ent.Value{*id}
+		}
+	}
+	return nil
+}
+
+// RemovedEdges returns all edge names that were removed in this mutation.
+func (m *DeviceLoginMutation) RemovedEdges() []string {
+	edges := make([]string, 0, 1)
+	return edges
+}
+
+// RemovedIDs returns all IDs (to other nodes) that were removed for the edge with
+// the given name in this mutation.
+func (m *DeviceLoginMutation) RemovedIDs(name string) []ent.Value {
+	return nil
+}
+
+// ClearedEdges returns all edge names that were cleared in this mutation.
+func (m *DeviceLoginMutation) ClearedEdges() []string {
+	edges := make([]string, 0, 1)
+	if m.cleareddevice {
+		edges = append(edges, devicelogin.EdgeDevice)
+	}
+	return edges
+}
+
+// EdgeCleared returns a boolean which indicates if the edge with the given name
+// was cleared in this mutation.
+func (m *DeviceLoginMutation) EdgeCleared(name string) bool {
+	switch name {
+	case devicelogin.EdgeDevice:
+		return m.cleareddevice
+	}
+	return false
+}
+
+// ClearEdge clears the value of the edge with the given name. It returns an error
+// if that edge is not defined in the schema.
+func (m *DeviceLoginMutation) ClearEdge(name string) error {
+	switch name {
+	case devicelogin.EdgeDevice:
+		m.ClearDevice()
+		return nil
+	}
+	return fmt.Errorf("unknown DeviceLogin unique edge %s", name)
+}
+
+// ResetEdge resets all changes to the edge with the given name in this mutation.
+// It returns an error if the edge is not defined in the schema.
+func (m *DeviceLoginMutation) ResetEdge(name string) error {
+	switch name {
+	case devicelogin.EdgeDevice:
+		m.ResetDevice()
+		return nil
+	}
+	return fmt.Errorf("unknown DeviceLogin edge %s", name)
 }

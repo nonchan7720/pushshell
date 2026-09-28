@@ -13,6 +13,7 @@ import (
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"github.com/nonchan7720/webapp-notification/backend/internal/ent/device"
+	"github.com/nonchan7720/webapp-notification/backend/internal/ent/devicelogin"
 )
 
 // ent aliases to avoid import conflicts in user's code.
@@ -73,7 +74,8 @@ var (
 func checkColumn(t, c string) error {
 	initCheck.Do(func() {
 		columnCheck = sql.NewColumnCheck(map[string]func(string) bool{
-			device.Table: device.ValidColumn,
+			device.Table:      device.ValidColumn,
+			devicelogin.Table: devicelogin.ValidColumn,
 		})
 	})
 	return columnCheck(t, c)

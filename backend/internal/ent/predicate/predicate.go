@@ -8,3 +8,6 @@ import (
 
 // Device is the predicate function for device builders.
 type Device func(*sql.Selector)
+
+// DeviceLogin is the predicate function for devicelogin builders.
+type DeviceLogin func(*sql.Selector)

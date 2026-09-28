@@ -12,7 +12,6 @@ var (
 	DevicesColumns = []*schema.Column{
 		{Name: "id", Type: field.TypeInt, Increment: true},
 		{Name: "installation_id", Type: field.TypeString, Unique: true, Size: 128},
-		{Name: "login_id", Type: field.TypeString, Size: 256},
 		{Name: "platform", Type: field.TypeEnum, Enums: []string{"ios", "android"}},
 		{Name: "push_token", Type: field.TypeString, Nullable: true, Size: 512},
 		{Name: "device_token", Type: field.TypeString, Nullable: true, Size: 4096},
@@ -32,22 +31,52 @@ var (
 		PrimaryKey: []*schema.Column{DevicesColumns[0]},
 		Indexes: []*schema.Index{
 			{
-				Name:    "device_login_id",
-				Unique:  false,
-				Columns: []*schema.Column{DevicesColumns[2]},
-			},
-			{
 				Name:    "device_push_token",
 				Unique:  false,
-				Columns: []*schema.Column{DevicesColumns[4]},
+				Columns: []*schema.Column{DevicesColumns[3]},
+			},
+		},
+	}
+	// DeviceLoginsColumns holds the columns for the "device_logins" table.
+	DeviceLoginsColumns = []*schema.Column{
+		{Name: "id", Type: field.TypeInt, Increment: true},
+		{Name: "login_id", Type: field.TypeString, Size: 256},
+		{Name: "created_at", Type: field.TypeTime},
+		{Name: "device_logins", Type: field.TypeInt},
+	}
+	// DeviceLoginsTable holds the schema information for the "device_logins" table.
+	DeviceLoginsTable = &schema.Table{
+		Name:       "device_logins",
+		Columns:    DeviceLoginsColumns,
+		PrimaryKey: []*schema.Column{DeviceLoginsColumns[0]},
+		ForeignKeys: []*schema.ForeignKey{
+			{
+				Symbol:     "device_logins_devices_logins",
+				Columns:    []*schema.Column{DeviceLoginsColumns[3]},
+				RefColumns: []*schema.Column{DevicesColumns[0]},
+				OnDelete:   schema.NoAction,
+			},
+		},
+		Indexes: []*schema.Index{
+			{
+				Name:    "devicelogin_login_id_device_logins",
+				Unique:  true,
+				Columns: []*schema.Column{DeviceLoginsColumns[1], DeviceLoginsColumns[3]},
+			},
+			{
+				Name:    "devicelogin_login_id",
+				Unique:  false,
+				Columns: []*schema.Column{DeviceLoginsColumns[1]},
 			},
 		},
 	}
 	// Tables holds all the tables in the schema.
 	Tables = []*schema.Table{
 		DevicesTable,
+		DeviceLoginsTable,
 	}
 )
 
 func init() {
+	DeviceLoginsTable.ForeignKeys[0].RefTable = DevicesTable
 }

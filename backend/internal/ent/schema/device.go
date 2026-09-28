@@ -4,12 +4,14 @@ import (
 	"time"
 
 	"entgo.io/ent"
+	"entgo.io/ent/schema/edge"
 	"entgo.io/ent/schema/field"
 	"entgo.io/ent/schema/index"
 )
 
 // Device はプッシュ通知の宛先となる端末 (アプリのインストール単位)。
-// installation_id をキーに upsert され、login_id によって通知の宛先を引く。
+// installation_id をキーに upsert される。ログイン ID との紐付けは
+// DeviceLogin (多対多: 1 端末に複数アカウント、1 アカウントに複数端末) が持つ。
 type Device struct {
 	ent.Schema
 }
@@ -22,10 +24,6 @@ func (Device) Fields() []ent.Field {
 			NotEmpty().
 			Unique().
 			Comment("アプリインストールごとに生成される安定した ID"),
-		field.String("login_id").
-			MaxLen(256).
-			NotEmpty().
-			Comment("Web アプリのログイン ID"),
 		field.Enum("platform").
 			Values("ios", "android"),
 		field.String("push_token").
@@ -54,13 +52,14 @@ func (Device) Fields() []ent.Field {
 
 // Edges of the Device.
 func (Device) Edges() []ent.Edge {
-	return nil
+	return []ent.Edge{
+		edge.To("logins", DeviceLogin.Type),
+	}
 }
 
 // Indexes of the Device.
 func (Device) Indexes() []ent.Index {
 	return []ent.Index{
-		index.Fields("login_id"),
 		index.Fields("push_token"),
 	}
 }

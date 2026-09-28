@@ -19,8 +19,6 @@ type Device struct {
 	ID int `json:"id,omitempty"`
 	// アプリインストールごとに生成される安定した ID
 	InstallationID string `json:"installation_id,omitempty"`
-	// Web アプリのログイン ID
-	LoginID string `json:"login_id,omitempty"`
 	// Platform holds the value of the "platform" field.
 	Platform device.Platform `json:"platform,omitempty"`
 	// Expo Push Token
@@ -42,8 +40,29 @@ type Device struct {
 	// CreatedAt holds the value of the "created_at" field.
 	CreatedAt time.Time `json:"created_at,omitempty"`
 	// UpdatedAt holds the value of the "updated_at" field.
-	UpdatedAt    time.Time `json:"updated_at,omitempty"`
+	UpdatedAt time.Time `json:"updated_at,omitempty"`
+	// Edges holds the relations/edges for other nodes in the graph.
+	// The values are being populated by the DeviceQuery when eager-loading is set.
+	Edges        DeviceEdges `json:"edges"`
 	selectValues sql.SelectValues
+}
+
+// DeviceEdges holds the relations/edges for other nodes in the graph.
+type DeviceEdges struct {
+	// Logins holds the value of the logins edge.
+	Logins []*DeviceLogin `json:"logins,omitempty"`
+	// loadedTypes holds the information for reporting if a
+	// type was loaded (or requested) in eager-loading or not.
+	loadedTypes [1]bool
+}
+
+// LoginsOrErr returns the Logins value or an error if the edge
+// was not loaded in eager-loading.
+func (e DeviceEdges) LoginsOrErr() ([]*DeviceLogin, error) {
+	if e.loadedTypes[0] {
+		return e.Logins, nil
+	}
+	return nil, &NotLoadedError{edge: "logins"}
 }
 
 // scanValues returns the types for scanning values from sql.Rows.
@@ -53,7 +72,7 @@ func (*Device) scanValues(columns []string) ([]any, error) {
 		switch columns[i] {
 		case device.FieldID:
 			values[i] = new(sql.NullInt64)
-		case device.FieldInstallationID, device.FieldLoginID, device.FieldPlatform, device.FieldPushToken, device.FieldDeviceToken, device.FieldAppID, device.FieldAppVersion, device.FieldBuildNumber, device.FieldOsVersion, device.FieldDeviceModel, device.FieldLocale:
+		case device.FieldInstallationID, device.FieldPlatform, device.FieldPushToken, device.FieldDeviceToken, device.FieldAppID, device.FieldAppVersion, device.FieldBuildNumber, device.FieldOsVersion, device.FieldDeviceModel, device.FieldLocale:
 			values[i] = new(sql.NullString)
 		case device.FieldCreatedAt, device.FieldUpdatedAt:
 			values[i] = new(sql.NullTime)
@@ -83,12 +102,6 @@ func (_m *Device) assignValues(columns []string, values []any) error {
 				return fmt.Errorf("unexpected type %T for field installation_id", values[i])
 			} else if value.Valid {
 				_m.InstallationID = value.String
-			}
-		case device.FieldLoginID:
-			if value, ok := values[i].(*sql.NullString); !ok {
-				return fmt.Errorf("unexpected type %T for field login_id", values[i])
-			} else if value.Valid {
-				_m.LoginID = value.String
 			}
 		case device.FieldPlatform:
 			if value, ok := values[i].(*sql.NullString); !ok {
@@ -169,6 +182,11 @@ func (_m *Device) Value(name string) (ent.Value, error) {
 	return _m.selectValues.Get(name)
 }
 
+// QueryLogins queries the "logins" edge of the Device entity.
+func (_m *Device) QueryLogins() *DeviceLoginQuery {
+	return NewDeviceClient(_m.config).QueryLogins(_m)
+}
+
 // Update returns a builder for updating this Device.
 // Note that you need to call Device.Unwrap() before calling this method if this Device
 // was returned from a transaction, and the transaction was committed or rolled back.
@@ -194,9 +212,6 @@ func (_m *Device) String() string {
 	builder.WriteString(fmt.Sprintf("id=%v, ", _m.ID))
 	builder.WriteString("installation_id=")
 	builder.WriteString(_m.InstallationID)
-	builder.WriteString(", ")
-	builder.WriteString("login_id=")
-	builder.WriteString(_m.LoginID)
 	builder.WriteString(", ")
 	builder.WriteString("platform=")
 	builder.WriteString(fmt.Sprintf("%v", _m.Platform))

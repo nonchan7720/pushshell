@@ -12,6 +12,7 @@ import (
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
 	"github.com/nonchan7720/webapp-notification/backend/internal/ent/device"
+	"github.com/nonchan7720/webapp-notification/backend/internal/ent/devicelogin"
 )
 
 // DeviceCreate is the builder for creating a Device entity.
@@ -25,12 +26,6 @@ type DeviceCreate struct {
 // SetInstallationID sets the "installation_id" field.
 func (_c *DeviceCreate) SetInstallationID(v string) *DeviceCreate {
 	_c.mutation.SetInstallationID(v)
-	return _c
-}
-
-// SetLoginID sets the "login_id" field.
-func (_c *DeviceCreate) SetLoginID(v string) *DeviceCreate {
-	_c.mutation.SetLoginID(v)
 	return _c
 }
 
@@ -180,6 +175,21 @@ func (_c *DeviceCreate) SetNillableUpdatedAt(v *time.Time) *DeviceCreate {
 	return _c
 }
 
+// AddLoginIDs adds the "logins" edge to the DeviceLogin entity by IDs.
+func (_c *DeviceCreate) AddLoginIDs(ids ...int) *DeviceCreate {
+	_c.mutation.AddLoginIDs(ids...)
+	return _c
+}
+
+// AddLogins adds the "logins" edges to the DeviceLogin entity.
+func (_c *DeviceCreate) AddLogins(v ...*DeviceLogin) *DeviceCreate {
+	ids := make([]int, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _c.AddLoginIDs(ids...)
+}
+
 // Mutation returns the DeviceMutation object of the builder.
 func (_c *DeviceCreate) Mutation() *DeviceMutation {
 	return _c.mutation
@@ -233,14 +243,6 @@ func (_c *DeviceCreate) check() error {
 	if v, ok := _c.mutation.InstallationID(); ok {
 		if err := device.InstallationIDValidator(v); err != nil {
 			return &ValidationError{Name: "installation_id", err: fmt.Errorf(`ent: validator failed for field "Device.installation_id": %w`, err)}
-		}
-	}
-	if _, ok := _c.mutation.LoginID(); !ok {
-		return &ValidationError{Name: "login_id", err: errors.New(`ent: missing required field "Device.login_id"`)}
-	}
-	if v, ok := _c.mutation.LoginID(); ok {
-		if err := device.LoginIDValidator(v); err != nil {
-			return &ValidationError{Name: "login_id", err: fmt.Errorf(`ent: validator failed for field "Device.login_id": %w`, err)}
 		}
 	}
 	if _, ok := _c.mutation.Platform(); !ok {
@@ -328,10 +330,6 @@ func (_c *DeviceCreate) createSpec() (*Device, *sqlgraph.CreateSpec) {
 		_spec.SetField(device.FieldInstallationID, field.TypeString, value)
 		_node.InstallationID = value
 	}
-	if value, ok := _c.mutation.LoginID(); ok {
-		_spec.SetField(device.FieldLoginID, field.TypeString, value)
-		_node.LoginID = value
-	}
 	if value, ok := _c.mutation.Platform(); ok {
 		_spec.SetField(device.FieldPlatform, field.TypeEnum, value)
 		_node.Platform = value
@@ -375,6 +373,22 @@ func (_c *DeviceCreate) createSpec() (*Device, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.UpdatedAt(); ok {
 		_spec.SetField(device.FieldUpdatedAt, field.TypeTime, value)
 		_node.UpdatedAt = value
+	}
+	if nodes := _c.mutation.LoginsIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   device.LoginsTable,
+			Columns: []string{device.LoginsColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(devicelogin.FieldID, field.TypeInt),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges = append(_spec.Edges, edge)
 	}
 	return _node, _spec
 }
@@ -437,18 +451,6 @@ func (u *DeviceUpsert) SetInstallationID(v string) *DeviceUpsert {
 // UpdateInstallationID sets the "installation_id" field to the value that was provided on create.
 func (u *DeviceUpsert) UpdateInstallationID() *DeviceUpsert {
 	u.SetExcluded(device.FieldInstallationID)
-	return u
-}
-
-// SetLoginID sets the "login_id" field.
-func (u *DeviceUpsert) SetLoginID(v string) *DeviceUpsert {
-	u.Set(device.FieldLoginID, v)
-	return u
-}
-
-// UpdateLoginID sets the "login_id" field to the value that was provided on create.
-func (u *DeviceUpsert) UpdateLoginID() *DeviceUpsert {
-	u.SetExcluded(device.FieldLoginID)
 	return u
 }
 
@@ -676,20 +678,6 @@ func (u *DeviceUpsertOne) SetInstallationID(v string) *DeviceUpsertOne {
 func (u *DeviceUpsertOne) UpdateInstallationID() *DeviceUpsertOne {
 	return u.Update(func(s *DeviceUpsert) {
 		s.UpdateInstallationID()
-	})
-}
-
-// SetLoginID sets the "login_id" field.
-func (u *DeviceUpsertOne) SetLoginID(v string) *DeviceUpsertOne {
-	return u.Update(func(s *DeviceUpsert) {
-		s.SetLoginID(v)
-	})
-}
-
-// UpdateLoginID sets the "login_id" field to the value that was provided on create.
-func (u *DeviceUpsertOne) UpdateLoginID() *DeviceUpsertOne {
-	return u.Update(func(s *DeviceUpsert) {
-		s.UpdateLoginID()
 	})
 }
 
@@ -1111,20 +1099,6 @@ func (u *DeviceUpsertBulk) SetInstallationID(v string) *DeviceUpsertBulk {
 func (u *DeviceUpsertBulk) UpdateInstallationID() *DeviceUpsertBulk {
 	return u.Update(func(s *DeviceUpsert) {
 		s.UpdateInstallationID()
-	})
-}
-
-// SetLoginID sets the "login_id" field.
-func (u *DeviceUpsertBulk) SetLoginID(v string) *DeviceUpsertBulk {
-	return u.Update(func(s *DeviceUpsert) {
-		s.SetLoginID(v)
-	})
-}
-
-// UpdateLoginID sets the "login_id" field to the value that was provided on create.
-func (u *DeviceUpsertBulk) UpdateLoginID() *DeviceUpsertBulk {
-	return u.Update(func(s *DeviceUpsert) {
-		s.UpdateLoginID()
 	})
 }
 

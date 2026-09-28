@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"entgo.io/ent/dialect/sql"
+	"entgo.io/ent/dialect/sql/sqlgraph"
 	"github.com/nonchan7720/webapp-notification/backend/internal/ent/predicate"
 )
 
@@ -57,11 +58,6 @@ func IDLTE(id int) predicate.Device {
 // InstallationID applies equality check predicate on the "installation_id" field. It's identical to InstallationIDEQ.
 func InstallationID(v string) predicate.Device {
 	return predicate.Device(sql.FieldEQ(FieldInstallationID, v))
-}
-
-// LoginID applies equality check predicate on the "login_id" field. It's identical to LoginIDEQ.
-func LoginID(v string) predicate.Device {
-	return predicate.Device(sql.FieldEQ(FieldLoginID, v))
 }
 
 // PushToken applies equality check predicate on the "push_token" field. It's identical to PushTokenEQ.
@@ -177,71 +173,6 @@ func InstallationIDEqualFold(v string) predicate.Device {
 // InstallationIDContainsFold applies the ContainsFold predicate on the "installation_id" field.
 func InstallationIDContainsFold(v string) predicate.Device {
 	return predicate.Device(sql.FieldContainsFold(FieldInstallationID, v))
-}
-
-// LoginIDEQ applies the EQ predicate on the "login_id" field.
-func LoginIDEQ(v string) predicate.Device {
-	return predicate.Device(sql.FieldEQ(FieldLoginID, v))
-}
-
-// LoginIDNEQ applies the NEQ predicate on the "login_id" field.
-func LoginIDNEQ(v string) predicate.Device {
-	return predicate.Device(sql.FieldNEQ(FieldLoginID, v))
-}
-
-// LoginIDIn applies the In predicate on the "login_id" field.
-func LoginIDIn(vs ...string) predicate.Device {
-	return predicate.Device(sql.FieldIn(FieldLoginID, vs...))
-}
-
-// LoginIDNotIn applies the NotIn predicate on the "login_id" field.
-func LoginIDNotIn(vs ...string) predicate.Device {
-	return predicate.Device(sql.FieldNotIn(FieldLoginID, vs...))
-}
-
-// LoginIDGT applies the GT predicate on the "login_id" field.
-func LoginIDGT(v string) predicate.Device {
-	return predicate.Device(sql.FieldGT(FieldLoginID, v))
-}
-
-// LoginIDGTE applies the GTE predicate on the "login_id" field.
-func LoginIDGTE(v string) predicate.Device {
-	return predicate.Device(sql.FieldGTE(FieldLoginID, v))
-}
-
-// LoginIDLT applies the LT predicate on the "login_id" field.
-func LoginIDLT(v string) predicate.Device {
-	return predicate.Device(sql.FieldLT(FieldLoginID, v))
-}
-
-// LoginIDLTE applies the LTE predicate on the "login_id" field.
-func LoginIDLTE(v string) predicate.Device {
-	return predicate.Device(sql.FieldLTE(FieldLoginID, v))
-}
-
-// LoginIDContains applies the Contains predicate on the "login_id" field.
-func LoginIDContains(v string) predicate.Device {
-	return predicate.Device(sql.FieldContains(FieldLoginID, v))
-}
-
-// LoginIDHasPrefix applies the HasPrefix predicate on the "login_id" field.
-func LoginIDHasPrefix(v string) predicate.Device {
-	return predicate.Device(sql.FieldHasPrefix(FieldLoginID, v))
-}
-
-// LoginIDHasSuffix applies the HasSuffix predicate on the "login_id" field.
-func LoginIDHasSuffix(v string) predicate.Device {
-	return predicate.Device(sql.FieldHasSuffix(FieldLoginID, v))
-}
-
-// LoginIDEqualFold applies the EqualFold predicate on the "login_id" field.
-func LoginIDEqualFold(v string) predicate.Device {
-	return predicate.Device(sql.FieldEqualFold(FieldLoginID, v))
-}
-
-// LoginIDContainsFold applies the ContainsFold predicate on the "login_id" field.
-func LoginIDContainsFold(v string) predicate.Device {
-	return predicate.Device(sql.FieldContainsFold(FieldLoginID, v))
 }
 
 // PlatformEQ applies the EQ predicate on the "platform" field.
@@ -942,6 +873,29 @@ func UpdatedAtLT(v time.Time) predicate.Device {
 // UpdatedAtLTE applies the LTE predicate on the "updated_at" field.
 func UpdatedAtLTE(v time.Time) predicate.Device {
 	return predicate.Device(sql.FieldLTE(FieldUpdatedAt, v))
+}
+
+// HasLogins applies the HasEdge predicate on the "logins" edge.
+func HasLogins() predicate.Device {
+	return predicate.Device(func(s *sql.Selector) {
+		step := sqlgraph.NewStep(
+			sqlgraph.From(Table, FieldID),
+			sqlgraph.Edge(sqlgraph.O2M, false, LoginsTable, LoginsColumn),
+		)
+		sqlgraph.HasNeighbors(s, step)
+	})
+}
+
+// HasLoginsWith applies the HasEdge predicate on the "logins" edge with a given conditions (other predicates).
+func HasLoginsWith(preds ...predicate.DeviceLogin) predicate.Device {
+	return predicate.Device(func(s *sql.Selector) {
+		step := newLoginsStep()
+		sqlgraph.HasNeighborsWith(s, step, func(s *sql.Selector) {
+			for _, p := range preds {
+				p(s)
+			}
+		})
+	})
 }
 
 // And groups predicates with the AND operator between them.

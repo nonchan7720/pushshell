@@ -12,6 +12,7 @@ import (
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
 	"github.com/nonchan7720/webapp-notification/backend/internal/ent/device"
+	"github.com/nonchan7720/webapp-notification/backend/internal/ent/devicelogin"
 	"github.com/nonchan7720/webapp-notification/backend/internal/ent/predicate"
 )
 
@@ -38,20 +39,6 @@ func (_u *DeviceUpdate) SetInstallationID(v string) *DeviceUpdate {
 func (_u *DeviceUpdate) SetNillableInstallationID(v *string) *DeviceUpdate {
 	if v != nil {
 		_u.SetInstallationID(*v)
-	}
-	return _u
-}
-
-// SetLoginID sets the "login_id" field.
-func (_u *DeviceUpdate) SetLoginID(v string) *DeviceUpdate {
-	_u.mutation.SetLoginID(v)
-	return _u
-}
-
-// SetNillableLoginID sets the "login_id" field if the given value is not nil.
-func (_u *DeviceUpdate) SetNillableLoginID(v *string) *DeviceUpdate {
-	if v != nil {
-		_u.SetLoginID(*v)
 	}
 	return _u
 }
@@ -236,9 +223,45 @@ func (_u *DeviceUpdate) SetUpdatedAt(v time.Time) *DeviceUpdate {
 	return _u
 }
 
+// AddLoginIDs adds the "logins" edge to the DeviceLogin entity by IDs.
+func (_u *DeviceUpdate) AddLoginIDs(ids ...int) *DeviceUpdate {
+	_u.mutation.AddLoginIDs(ids...)
+	return _u
+}
+
+// AddLogins adds the "logins" edges to the DeviceLogin entity.
+func (_u *DeviceUpdate) AddLogins(v ...*DeviceLogin) *DeviceUpdate {
+	ids := make([]int, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _u.AddLoginIDs(ids...)
+}
+
 // Mutation returns the DeviceMutation object of the builder.
 func (_u *DeviceUpdate) Mutation() *DeviceMutation {
 	return _u.mutation
+}
+
+// ClearLogins clears all "logins" edges to the DeviceLogin entity.
+func (_u *DeviceUpdate) ClearLogins() *DeviceUpdate {
+	_u.mutation.ClearLogins()
+	return _u
+}
+
+// RemoveLoginIDs removes the "logins" edge to DeviceLogin entities by IDs.
+func (_u *DeviceUpdate) RemoveLoginIDs(ids ...int) *DeviceUpdate {
+	_u.mutation.RemoveLoginIDs(ids...)
+	return _u
+}
+
+// RemoveLogins removes "logins" edges to DeviceLogin entities.
+func (_u *DeviceUpdate) RemoveLogins(v ...*DeviceLogin) *DeviceUpdate {
+	ids := make([]int, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _u.RemoveLoginIDs(ids...)
 }
 
 // Save executes the query and returns the number of nodes affected by the update operation.
@@ -282,11 +305,6 @@ func (_u *DeviceUpdate) check() error {
 	if v, ok := _u.mutation.InstallationID(); ok {
 		if err := device.InstallationIDValidator(v); err != nil {
 			return &ValidationError{Name: "installation_id", err: fmt.Errorf(`ent: validator failed for field "Device.installation_id": %w`, err)}
-		}
-	}
-	if v, ok := _u.mutation.LoginID(); ok {
-		if err := device.LoginIDValidator(v); err != nil {
-			return &ValidationError{Name: "login_id", err: fmt.Errorf(`ent: validator failed for field "Device.login_id": %w`, err)}
 		}
 	}
 	if v, ok := _u.mutation.Platform(); ok {
@@ -352,9 +370,6 @@ func (_u *DeviceUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	if value, ok := _u.mutation.InstallationID(); ok {
 		_spec.SetField(device.FieldInstallationID, field.TypeString, value)
 	}
-	if value, ok := _u.mutation.LoginID(); ok {
-		_spec.SetField(device.FieldLoginID, field.TypeString, value)
-	}
 	if value, ok := _u.mutation.Platform(); ok {
 		_spec.SetField(device.FieldPlatform, field.TypeEnum, value)
 	}
@@ -409,6 +424,51 @@ func (_u *DeviceUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	if value, ok := _u.mutation.UpdatedAt(); ok {
 		_spec.SetField(device.FieldUpdatedAt, field.TypeTime, value)
 	}
+	if _u.mutation.LoginsCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   device.LoginsTable,
+			Columns: []string{device.LoginsColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(devicelogin.FieldID, field.TypeInt),
+			},
+		}
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := _u.mutation.RemovedLoginsIDs(); len(nodes) > 0 && !_u.mutation.LoginsCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   device.LoginsTable,
+			Columns: []string{device.LoginsColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(devicelogin.FieldID, field.TypeInt),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := _u.mutation.LoginsIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   device.LoginsTable,
+			Columns: []string{device.LoginsColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(devicelogin.FieldID, field.TypeInt),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges.Add = append(_spec.Edges.Add, edge)
+	}
 	if _node, err = sqlgraph.UpdateNodes(ctx, _u.driver, _spec); err != nil {
 		if _, ok := err.(*sqlgraph.NotFoundError); ok {
 			err = &NotFoundError{device.Label}
@@ -439,20 +499,6 @@ func (_u *DeviceUpdateOne) SetInstallationID(v string) *DeviceUpdateOne {
 func (_u *DeviceUpdateOne) SetNillableInstallationID(v *string) *DeviceUpdateOne {
 	if v != nil {
 		_u.SetInstallationID(*v)
-	}
-	return _u
-}
-
-// SetLoginID sets the "login_id" field.
-func (_u *DeviceUpdateOne) SetLoginID(v string) *DeviceUpdateOne {
-	_u.mutation.SetLoginID(v)
-	return _u
-}
-
-// SetNillableLoginID sets the "login_id" field if the given value is not nil.
-func (_u *DeviceUpdateOne) SetNillableLoginID(v *string) *DeviceUpdateOne {
-	if v != nil {
-		_u.SetLoginID(*v)
 	}
 	return _u
 }
@@ -637,9 +683,45 @@ func (_u *DeviceUpdateOne) SetUpdatedAt(v time.Time) *DeviceUpdateOne {
 	return _u
 }
 
+// AddLoginIDs adds the "logins" edge to the DeviceLogin entity by IDs.
+func (_u *DeviceUpdateOne) AddLoginIDs(ids ...int) *DeviceUpdateOne {
+	_u.mutation.AddLoginIDs(ids...)
+	return _u
+}
+
+// AddLogins adds the "logins" edges to the DeviceLogin entity.
+func (_u *DeviceUpdateOne) AddLogins(v ...*DeviceLogin) *DeviceUpdateOne {
+	ids := make([]int, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _u.AddLoginIDs(ids...)
+}
+
 // Mutation returns the DeviceMutation object of the builder.
 func (_u *DeviceUpdateOne) Mutation() *DeviceMutation {
 	return _u.mutation
+}
+
+// ClearLogins clears all "logins" edges to the DeviceLogin entity.
+func (_u *DeviceUpdateOne) ClearLogins() *DeviceUpdateOne {
+	_u.mutation.ClearLogins()
+	return _u
+}
+
+// RemoveLoginIDs removes the "logins" edge to DeviceLogin entities by IDs.
+func (_u *DeviceUpdateOne) RemoveLoginIDs(ids ...int) *DeviceUpdateOne {
+	_u.mutation.RemoveLoginIDs(ids...)
+	return _u
+}
+
+// RemoveLogins removes "logins" edges to DeviceLogin entities.
+func (_u *DeviceUpdateOne) RemoveLogins(v ...*DeviceLogin) *DeviceUpdateOne {
+	ids := make([]int, len(v))
+	for i := range v {
+		ids[i] = v[i].ID
+	}
+	return _u.RemoveLoginIDs(ids...)
 }
 
 // Where appends a list predicates to the DeviceUpdate builder.
@@ -696,11 +778,6 @@ func (_u *DeviceUpdateOne) check() error {
 	if v, ok := _u.mutation.InstallationID(); ok {
 		if err := device.InstallationIDValidator(v); err != nil {
 			return &ValidationError{Name: "installation_id", err: fmt.Errorf(`ent: validator failed for field "Device.installation_id": %w`, err)}
-		}
-	}
-	if v, ok := _u.mutation.LoginID(); ok {
-		if err := device.LoginIDValidator(v); err != nil {
-			return &ValidationError{Name: "login_id", err: fmt.Errorf(`ent: validator failed for field "Device.login_id": %w`, err)}
 		}
 	}
 	if v, ok := _u.mutation.Platform(); ok {
@@ -783,9 +860,6 @@ func (_u *DeviceUpdateOne) sqlSave(ctx context.Context) (_node *Device, err erro
 	if value, ok := _u.mutation.InstallationID(); ok {
 		_spec.SetField(device.FieldInstallationID, field.TypeString, value)
 	}
-	if value, ok := _u.mutation.LoginID(); ok {
-		_spec.SetField(device.FieldLoginID, field.TypeString, value)
-	}
 	if value, ok := _u.mutation.Platform(); ok {
 		_spec.SetField(device.FieldPlatform, field.TypeEnum, value)
 	}
@@ -839,6 +913,51 @@ func (_u *DeviceUpdateOne) sqlSave(ctx context.Context) (_node *Device, err erro
 	}
 	if value, ok := _u.mutation.UpdatedAt(); ok {
 		_spec.SetField(device.FieldUpdatedAt, field.TypeTime, value)
+	}
+	if _u.mutation.LoginsCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   device.LoginsTable,
+			Columns: []string{device.LoginsColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(devicelogin.FieldID, field.TypeInt),
+			},
+		}
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := _u.mutation.RemovedLoginsIDs(); len(nodes) > 0 && !_u.mutation.LoginsCleared() {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   device.LoginsTable,
+			Columns: []string{device.LoginsColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(devicelogin.FieldID, field.TypeInt),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges.Clear = append(_spec.Edges.Clear, edge)
+	}
+	if nodes := _u.mutation.LoginsIDs(); len(nodes) > 0 {
+		edge := &sqlgraph.EdgeSpec{
+			Rel:     sqlgraph.O2M,
+			Inverse: false,
+			Table:   device.LoginsTable,
+			Columns: []string{device.LoginsColumn},
+			Bidi:    false,
+			Target: &sqlgraph.EdgeTarget{
+				IDSpec: sqlgraph.NewFieldSpec(devicelogin.FieldID, field.TypeInt),
+			},
+		}
+		for _, k := range nodes {
+			edge.Target.Nodes = append(edge.Target.Nodes, k)
+		}
+		_spec.Edges.Add = append(_spec.Edges.Add, edge)
 	}
 	_node = &Device{config: _u.config}
 	_spec.Assign = _node.assignValues

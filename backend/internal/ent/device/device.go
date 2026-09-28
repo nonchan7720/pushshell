@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"entgo.io/ent/dialect/sql"
+	"entgo.io/ent/dialect/sql/sqlgraph"
 )
 
 const (
@@ -16,8 +17,6 @@ const (
 	FieldID = "id"
 	// FieldInstallationID holds the string denoting the installation_id field in the database.
 	FieldInstallationID = "installation_id"
-	// FieldLoginID holds the string denoting the login_id field in the database.
-	FieldLoginID = "login_id"
 	// FieldPlatform holds the string denoting the platform field in the database.
 	FieldPlatform = "platform"
 	// FieldPushToken holds the string denoting the push_token field in the database.
@@ -40,15 +39,23 @@ const (
 	FieldCreatedAt = "created_at"
 	// FieldUpdatedAt holds the string denoting the updated_at field in the database.
 	FieldUpdatedAt = "updated_at"
+	// EdgeLogins holds the string denoting the logins edge name in mutations.
+	EdgeLogins = "logins"
 	// Table holds the table name of the device in the database.
 	Table = "devices"
+	// LoginsTable is the table that holds the logins relation/edge.
+	LoginsTable = "device_logins"
+	// LoginsInverseTable is the table name for the DeviceLogin entity.
+	// It exists in this package in order to avoid circular dependency with the "devicelogin" package.
+	LoginsInverseTable = "device_logins"
+	// LoginsColumn is the table column denoting the logins relation/edge.
+	LoginsColumn = "device_logins"
 )
 
 // Columns holds all SQL columns for device fields.
 var Columns = []string{
 	FieldID,
 	FieldInstallationID,
-	FieldLoginID,
 	FieldPlatform,
 	FieldPushToken,
 	FieldDeviceToken,
@@ -75,8 +82,6 @@ func ValidColumn(column string) bool {
 var (
 	// InstallationIDValidator is a validator for the "installation_id" field. It is called by the builders before save.
 	InstallationIDValidator func(string) error
-	// LoginIDValidator is a validator for the "login_id" field. It is called by the builders before save.
-	LoginIDValidator func(string) error
 	// PushTokenValidator is a validator for the "push_token" field. It is called by the builders before save.
 	PushTokenValidator func(string) error
 	// DeviceTokenValidator is a validator for the "device_token" field. It is called by the builders before save.
@@ -137,11 +142,6 @@ func ByInstallationID(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldInstallationID, opts...).ToFunc()
 }
 
-// ByLoginID orders the results by the login_id field.
-func ByLoginID(opts ...sql.OrderTermOption) OrderOption {
-	return sql.OrderByField(FieldLoginID, opts...).ToFunc()
-}
-
 // ByPlatform orders the results by the platform field.
 func ByPlatform(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldPlatform, opts...).ToFunc()
@@ -195,4 +195,25 @@ func ByCreatedAt(opts ...sql.OrderTermOption) OrderOption {
 // ByUpdatedAt orders the results by the updated_at field.
 func ByUpdatedAt(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldUpdatedAt, opts...).ToFunc()
+}
+
+// ByLoginsCount orders the results by logins count.
+func ByLoginsCount(opts ...sql.OrderTermOption) OrderOption {
+	return func(s *sql.Selector) {
+		sqlgraph.OrderByNeighborsCount(s, newLoginsStep(), opts...)
+	}
+}
+
+// ByLogins orders the results by logins terms.
+func ByLogins(term sql.OrderTerm, terms ...sql.OrderTerm) OrderOption {
+	return func(s *sql.Selector) {
+		sqlgraph.OrderByNeighborTerms(s, newLoginsStep(), append([]sql.OrderTerm{term}, terms...)...)
+	}
+}
+func newLoginsStep() *sqlgraph.Step {
+	return sqlgraph.NewStep(
+		sqlgraph.From(Table, FieldID),
+		sqlgraph.To(LoginsInverseTable, FieldID),
+		sqlgraph.Edge(sqlgraph.O2M, false, LoginsTable, LoginsColumn),
+	)
 }
