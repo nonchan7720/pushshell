@@ -59,13 +59,15 @@ func (e Platform) Valid() bool {
 	}
 }
 
-// DeliveryResult defines model for DeliveryResult.
+// DeliveryResult 端末ごとの送信結果。同じ端末に複数の宛先ログイン ID が該当しても 1 通にまとめる
 type DeliveryResult struct {
 	// Error プッシュサービスからのエラー内容
-	Error          *string              `json:"error,omitempty"`
-	InstallationId string               `json:"installationId"`
-	LoginId        string               `json:"loginId"`
-	Status         DeliveryResultStatus `json:"status"`
+	Error          *string `json:"error,omitempty"`
+	InstallationId string  `json:"installationId"`
+
+	// LoginIds リクエストの loginIds のうち、この端末に紐付いていたもの
+	LoginIds []string             `json:"loginIds"`
+	Status   DeliveryResultStatus `json:"status"`
 
 	// Unregistered トークン失効により端末登録を削除した場合 true
 	Unregistered *bool `json:"unregistered,omitempty"`
@@ -76,29 +78,36 @@ type DeliveryResultStatus string
 
 // Device defines model for Device.
 type Device struct {
-	// AppId バンドル ID / パッケージ名
-	AppId       *string   `json:"appId,omitempty"`
-	AppVersion  *string   `json:"appVersion,omitempty"`
-	BuildNumber *string   `json:"buildNumber,omitempty"`
-	CreatedAt   time.Time `json:"createdAt"`
-	DeviceModel *string   `json:"deviceModel,omitempty"`
+	AppId          *string   `json:"appId,omitempty"`
+	AppVersion     *string   `json:"appVersion,omitempty"`
+	BuildNumber    *string   `json:"buildNumber,omitempty"`
+	CreatedAt      time.Time `json:"createdAt"`
+	DeviceModel    *string   `json:"deviceModel,omitempty"`
+	DeviceToken    *string   `json:"deviceToken,omitempty"`
+	Id             int64     `json:"id"`
+	InstallationId string    `json:"installationId"`
+	Locale         *string   `json:"locale,omitempty"`
 
-	// DeviceToken ネイティブのデバイストークン (Android は FCM registration token、iOS は APNs device token の hex)。`PUSH_PROVIDER=native` で使う
-	DeviceToken *string `json:"deviceToken,omitempty"`
-	Id          int64   `json:"id"`
-
-	// InstallationId アプリインストールごとに生成される安定した ID
-	InstallationId string  `json:"installationId"`
-	Locale         *string `json:"locale,omitempty"`
-
-	// LoginId Web アプリのログイン ID (postMessage で受け取ったもの)
-	LoginId   string   `json:"loginId"`
-	OsVersion *string  `json:"osVersion,omitempty"`
-	Platform  Platform `json:"platform"`
-
-	// PushToken Expo Push Token (`ExponentPushToken[...]`)。`PUSH_PROVIDER=expo` で使う
+	// LoginIds この端末に紐付いているログイン ID (多対多)
+	LoginIds  []string  `json:"loginIds"`
+	OsVersion *string   `json:"osVersion,omitempty"`
+	Platform  Platform  `json:"platform"`
 	PushToken *string   `json:"pushToken,omitempty"`
 	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+// DeviceInfo 端末情報 (ログイン ID を含まない DeviceRegistration)
+type DeviceInfo struct {
+	AppId          *string  `json:"appId,omitempty"`
+	AppVersion     *string  `json:"appVersion,omitempty"`
+	BuildNumber    *string  `json:"buildNumber,omitempty"`
+	DeviceModel    *string  `json:"deviceModel,omitempty"`
+	DeviceToken    *string  `json:"deviceToken,omitempty"`
+	InstallationId string   `json:"installationId"`
+	Locale         *string  `json:"locale,omitempty"`
+	OsVersion      *string  `json:"osVersion,omitempty"`
+	Platform       Platform `json:"platform"`
+	PushToken      *string  `json:"pushToken,omitempty"`
 }
 
 // DeviceRegistration `pushToken` (Expo Push Token) と `deviceToken` (FCM / APNs のネイティブトークン) は
@@ -272,8 +281,9 @@ type ClientInterface interface {
 
 	// RegisterDeviceWithBody 端末を登録 / 更新する
 	//
-	// `installationId` をキーに upsert する。同じ端末で別のログイン ID になった場合は
-	// ログイン ID が付け替えられる。Web アプリのログイン時にアプリが呼び出す。
+	// `installationId` をキーに端末を upsert し、`loginId` をその端末に紐付ける。
+	// 端末とログイン ID は多対多 (1 端末に複数アカウント、1 アカウントに複数端末)。
+	// 既に紐付いている場合は端末情報 (トークン等) だけ更新する。Web アプリのログイン時にアプリが呼び出す。
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -282,15 +292,16 @@ type ClientInterface interface {
 
 	// RegisterDevice 端末を登録 / 更新する
 	//
-	// `installationId` をキーに upsert する。同じ端末で別のログイン ID になった場合は
-	// ログイン ID が付け替えられる。Web アプリのログイン時にアプリが呼び出す。
+	// `installationId` をキーに端末を upsert し、`loginId` をその端末に紐付ける。
+	// 端末とログイン ID は多対多 (1 端末に複数アカウント、1 アカウントに複数端末)。
+	// 既に紐付いている場合は端末情報 (トークン等) だけ更新する。Web アプリのログイン時にアプリが呼び出す。
 	//
 	// Takes a body of the `application/json` content type.
 	//
 	// Corresponds with POST /v1/devices (the `RegisterDevice` operationId).
 	RegisterDevice(ctx context.Context, body RegisterDeviceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// UnregisterDevice 端末の登録を解除する (ログアウト時)
+	// UnregisterDevice 端末の登録を解除する (全ログイン ID の紐付けごと削除)
 	//
 	// Corresponds with DELETE /v1/devices/{installationId} (the `UnregisterDevice` operationId).
 	UnregisterDevice(ctx context.Context, installationId InstallationId, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -299,6 +310,24 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /v1/devices/{installationId} (the `GetDevice` operationId).
 	GetDevice(ctx context.Context, installationId InstallationId, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UnregisterDeviceLogin 端末から特定のログイン ID の紐付けだけを外す (そのユーザーのログアウト時)
+	//
+	// 端末自体とトークンは残るので、別のアカウントでログイン中ならそちらの通知は届き続ける。
+	// アプリから呼ぶほか、Web アプリのバックエンドがセッション失効時に API キーで呼んでもよい
+	// (installationId は bridge の `ready` イベントで Web アプリに渡る)。
+	//
+	// Corresponds with DELETE /v1/devices/{installationId}/logins/{loginId} (the `UnregisterDeviceLogin` operationId).
+	UnregisterDeviceLogin(ctx context.Context, installationId InstallationId, loginId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UnregisterLogin ログイン ID を全端末から外す (サーバー間)
+	//
+	// Web アプリ側でセッションが失効・無効化された (全端末ログアウト、退会など) ときに
+	// Web アプリのバックエンドから呼ぶ。以後そのログイン ID 宛の通知はどの端末にも届かない。
+	// 端末自体とトークンは残る (別アカウントの通知には影響しない)。
+	//
+	// Corresponds with DELETE /v1/logins/{loginId} (the `UnregisterLogin` operationId).
+	UnregisterLogin(ctx context.Context, loginId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// SendNotificationWithBody ログイン ID 宛にプッシュ通知を送る
 	//
@@ -338,8 +367,9 @@ func (c *Client) Healthz(ctx context.Context, reqEditors ...RequestEditorFn) (*h
 
 // RegisterDeviceWithBody 端末を登録 / 更新する
 //
-// `installationId` をキーに upsert する。同じ端末で別のログイン ID になった場合は
-// ログイン ID が付け替えられる。Web アプリのログイン時にアプリが呼び出す。
+// `installationId` をキーに端末を upsert し、`loginId` をその端末に紐付ける。
+// 端末とログイン ID は多対多 (1 端末に複数アカウント、1 アカウントに複数端末)。
+// 既に紐付いている場合は端末情報 (トークン等) だけ更新する。Web アプリのログイン時にアプリが呼び出す。
 //
 // Takes any type of body and a specified content type.
 //
@@ -358,8 +388,9 @@ func (c *Client) RegisterDeviceWithBody(ctx context.Context, contentType string,
 
 // RegisterDevice 端末を登録 / 更新する
 //
-// `installationId` をキーに upsert する。同じ端末で別のログイン ID になった場合は
-// ログイン ID が付け替えられる。Web アプリのログイン時にアプリが呼び出す。
+// `installationId` をキーに端末を upsert し、`loginId` をその端末に紐付ける。
+// 端末とログイン ID は多対多 (1 端末に複数アカウント、1 アカウントに複数端末)。
+// 既に紐付いている場合は端末情報 (トークン等) だけ更新する。Web アプリのログイン時にアプリが呼び出す。
 //
 // Takes a body of the `application/json` content type.
 //
@@ -376,7 +407,7 @@ func (c *Client) RegisterDevice(ctx context.Context, body RegisterDeviceJSONRequ
 	return c.Client.Do(req)
 }
 
-// UnregisterDevice 端末の登録を解除する (ログアウト時)
+// UnregisterDevice 端末の登録を解除する (全ログイン ID の紐付けごと削除)
 //
 // Corresponds with DELETE /v1/devices/{installationId} (the `UnregisterDevice` operationId).
 func (c *Client) UnregisterDevice(ctx context.Context, installationId InstallationId, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -396,6 +427,44 @@ func (c *Client) UnregisterDevice(ctx context.Context, installationId Installati
 // Corresponds with GET /v1/devices/{installationId} (the `GetDevice` operationId).
 func (c *Client) GetDevice(ctx context.Context, installationId InstallationId, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetDeviceRequest(c.Server, installationId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UnregisterDeviceLogin 端末から特定のログイン ID の紐付けだけを外す (そのユーザーのログアウト時)
+//
+// 端末自体とトークンは残るので、別のアカウントでログイン中ならそちらの通知は届き続ける。
+// アプリから呼ぶほか、Web アプリのバックエンドがセッション失効時に API キーで呼んでもよい
+// (installationId は bridge の `ready` イベントで Web アプリに渡る)。
+//
+// Corresponds with DELETE /v1/devices/{installationId}/logins/{loginId} (the `UnregisterDeviceLogin` operationId).
+func (c *Client) UnregisterDeviceLogin(ctx context.Context, installationId InstallationId, loginId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUnregisterDeviceLoginRequest(c.Server, installationId, loginId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UnregisterLogin ログイン ID を全端末から外す (サーバー間)
+//
+// Web アプリ側でセッションが失効・無効化された (全端末ログアウト、退会など) ときに
+// Web アプリのバックエンドから呼ぶ。以後そのログイン ID 宛の通知はどの端末にも届かない。
+// 端末自体とトークンは残る (別アカウントの通知には影響しない)。
+//
+// Corresponds with DELETE /v1/logins/{loginId} (the `UnregisterLogin` operationId).
+func (c *Client) UnregisterLogin(ctx context.Context, loginId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUnregisterLoginRequest(c.Server, loginId)
 	if err != nil {
 		return nil, err
 	}
@@ -581,6 +650,81 @@ func NewGetDeviceRequest(server string, installationId InstallationId) (*http.Re
 	return req, nil
 }
 
+// NewUnregisterDeviceLoginRequest constructs an http.Request for the UnregisterDeviceLogin method
+func NewUnregisterDeviceLoginRequest(server string, installationId InstallationId, loginId string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "installationId", installationId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "loginId", loginId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/devices/%s/logins/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewUnregisterLoginRequest constructs an http.Request for the UnregisterLogin method
+func NewUnregisterLoginRequest(server string, loginId string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "loginId", loginId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/logins/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewSendNotificationRequest calls the generic SendNotification builder with application/json body
 func NewSendNotificationRequest(server string, body SendNotificationJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -674,8 +818,9 @@ type ClientWithResponsesInterface interface {
 
 	// RegisterDeviceWithBodyWithResponse 端末を登録 / 更新する
 	//
-	// `installationId` をキーに upsert する。同じ端末で別のログイン ID になった場合は
-	// ログイン ID が付け替えられる。Web アプリのログイン時にアプリが呼び出す。
+	// `installationId` をキーに端末を upsert し、`loginId` をその端末に紐付ける。
+	// 端末とログイン ID は多対多 (1 端末に複数アカウント、1 アカウントに複数端末)。
+	// 既に紐付いている場合は端末情報 (トークン等) だけ更新する。Web アプリのログイン時にアプリが呼び出す。
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -684,15 +829,16 @@ type ClientWithResponsesInterface interface {
 
 	// RegisterDeviceWithResponse 端末を登録 / 更新する
 	//
-	// `installationId` をキーに upsert する。同じ端末で別のログイン ID になった場合は
-	// ログイン ID が付け替えられる。Web アプリのログイン時にアプリが呼び出す。
+	// `installationId` をキーに端末を upsert し、`loginId` をその端末に紐付ける。
+	// 端末とログイン ID は多対多 (1 端末に複数アカウント、1 アカウントに複数端末)。
+	// 既に紐付いている場合は端末情報 (トークン等) だけ更新する。Web アプリのログイン時にアプリが呼び出す。
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/devices (the `RegisterDevice` operationId).
 	RegisterDeviceWithResponse(ctx context.Context, body RegisterDeviceJSONRequestBody, reqEditors ...RequestEditorFn) (*RegisterDeviceResponse, error)
 
-	// UnregisterDeviceWithResponse 端末の登録を解除する (ログアウト時)
+	// UnregisterDeviceWithResponse 端末の登録を解除する (全ログイン ID の紐付けごと削除)
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -705,6 +851,28 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /v1/devices/{installationId} (the `GetDevice` operationId).
 	GetDeviceWithResponse(ctx context.Context, installationId InstallationId, reqEditors ...RequestEditorFn) (*GetDeviceResponse, error)
+
+	// UnregisterDeviceLoginWithResponse 端末から特定のログイン ID の紐付けだけを外す (そのユーザーのログアウト時)
+	//
+	// 端末自体とトークンは残るので、別のアカウントでログイン中ならそちらの通知は届き続ける。
+	// アプリから呼ぶほか、Web アプリのバックエンドがセッション失効時に API キーで呼んでもよい
+	// (installationId は bridge の `ready` イベントで Web アプリに渡る)。
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/devices/{installationId}/logins/{loginId} (the `UnregisterDeviceLogin` operationId).
+	UnregisterDeviceLoginWithResponse(ctx context.Context, installationId InstallationId, loginId string, reqEditors ...RequestEditorFn) (*UnregisterDeviceLoginResponse, error)
+
+	// UnregisterLoginWithResponse ログイン ID を全端末から外す (サーバー間)
+	//
+	// Web アプリ側でセッションが失効・無効化された (全端末ログアウト、退会など) ときに
+	// Web アプリのバックエンドから呼ぶ。以後そのログイン ID 宛の通知はどの端末にも届かない。
+	// 端末自体とトークンは残る (別アカウントの通知には影響しない)。
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/logins/{loginId} (the `UnregisterLogin` operationId).
+	UnregisterLoginWithResponse(ctx context.Context, loginId string, reqEditors ...RequestEditorFn) (*UnregisterLoginResponse, error)
 
 	// SendNotificationWithBodyWithResponse ログイン ID 宛にプッシュ通知を送る
 	//
@@ -919,6 +1087,101 @@ func (r GetDeviceResponse) ContentType() string {
 	return ""
 }
 
+type UnregisterDeviceLoginResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r UnregisterDeviceLoginResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetBody returns the raw response body bytes
+func (r UnregisterDeviceLoginResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r UnregisterDeviceLoginResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r UnregisterDeviceLoginResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r UnregisterDeviceLoginResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type UnregisterLoginResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *struct {
+		// Removed 紐付けを外した端末数 (0 でも 200)
+		Removed int `json:"removed"`
+	}
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r UnregisterLoginResponse) GetJSON200() *struct {
+	// Removed 紐付けを外した端末数 (0 でも 200)
+	Removed int `json:"removed"`
+} {
+	return r.JSON200
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r UnregisterLoginResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetBody returns the raw response body bytes
+func (r UnregisterLoginResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r UnregisterLoginResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r UnregisterLoginResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r UnregisterLoginResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type SendNotificationResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -989,8 +1252,9 @@ func (c *ClientWithResponses) HealthzWithResponse(ctx context.Context, reqEditor
 
 // RegisterDeviceWithBodyWithResponse 端末を登録 / 更新する
 //
-// `installationId` をキーに upsert する。同じ端末で別のログイン ID になった場合は
-// ログイン ID が付け替えられる。Web アプリのログイン時にアプリが呼び出す。
+// `installationId` をキーに端末を upsert し、`loginId` をその端末に紐付ける。
+// 端末とログイン ID は多対多 (1 端末に複数アカウント、1 アカウントに複数端末)。
+// 既に紐付いている場合は端末情報 (トークン等) だけ更新する。Web アプリのログイン時にアプリが呼び出す。
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -1005,8 +1269,9 @@ func (c *ClientWithResponses) RegisterDeviceWithBodyWithResponse(ctx context.Con
 
 // RegisterDeviceWithResponse 端末を登録 / 更新する
 //
-// `installationId` をキーに upsert する。同じ端末で別のログイン ID になった場合は
-// ログイン ID が付け替えられる。Web アプリのログイン時にアプリが呼び出す。
+// `installationId` をキーに端末を upsert し、`loginId` をその端末に紐付ける。
+// 端末とログイン ID は多対多 (1 端末に複数アカウント、1 アカウントに複数端末)。
+// 既に紐付いている場合は端末情報 (トークン等) だけ更新する。Web アプリのログイン時にアプリが呼び出す。
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
@@ -1019,7 +1284,7 @@ func (c *ClientWithResponses) RegisterDeviceWithResponse(ctx context.Context, bo
 	return ParseRegisterDeviceResponse(rsp)
 }
 
-// UnregisterDeviceWithResponse 端末の登録を解除する (ログアウト時)
+// UnregisterDeviceWithResponse 端末の登録を解除する (全ログイン ID の紐付けごと削除)
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -1043,6 +1308,40 @@ func (c *ClientWithResponses) GetDeviceWithResponse(ctx context.Context, install
 		return nil, err
 	}
 	return ParseGetDeviceResponse(rsp)
+}
+
+// UnregisterDeviceLoginWithResponse 端末から特定のログイン ID の紐付けだけを外す (そのユーザーのログアウト時)
+//
+// 端末自体とトークンは残るので、別のアカウントでログイン中ならそちらの通知は届き続ける。
+// アプリから呼ぶほか、Web アプリのバックエンドがセッション失効時に API キーで呼んでもよい
+// (installationId は bridge の `ready` イベントで Web アプリに渡る)。
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/devices/{installationId}/logins/{loginId} (the `UnregisterDeviceLogin` operationId).
+func (c *ClientWithResponses) UnregisterDeviceLoginWithResponse(ctx context.Context, installationId InstallationId, loginId string, reqEditors ...RequestEditorFn) (*UnregisterDeviceLoginResponse, error) {
+	rsp, err := c.UnregisterDeviceLogin(ctx, installationId, loginId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUnregisterDeviceLoginResponse(rsp)
+}
+
+// UnregisterLoginWithResponse ログイン ID を全端末から外す (サーバー間)
+//
+// Web アプリ側でセッションが失効・無効化された (全端末ログアウト、退会など) ときに
+// Web アプリのバックエンドから呼ぶ。以後そのログイン ID 宛の通知はどの端末にも届かない。
+// 端末自体とトークンは残る (別アカウントの通知には影響しない)。
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/logins/{loginId} (the `UnregisterLogin` operationId).
+func (c *ClientWithResponses) UnregisterLoginWithResponse(ctx context.Context, loginId string, reqEditors ...RequestEditorFn) (*UnregisterLoginResponse, error) {
+	rsp, err := c.UnregisterLogin(ctx, loginId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUnregisterLoginResponse(rsp)
 }
 
 // SendNotificationWithBodyWithResponse ログイン ID 宛にプッシュ通知を送る
@@ -1212,6 +1511,71 @@ func ParseGetDeviceResponse(rsp *http.Response) (*GetDeviceResponse, error) {
 	return response, nil
 }
 
+// ParseUnregisterDeviceLoginResponse parses an HTTP response from a UnregisterDeviceLoginWithResponse call
+func ParseUnregisterDeviceLoginResponse(rsp *http.Response) (*UnregisterDeviceLoginResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &UnregisterDeviceLoginResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseUnregisterLoginResponse parses an HTTP response from a UnregisterLoginWithResponse call
+func ParseUnregisterLoginResponse(rsp *http.Response) (*UnregisterLoginResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &UnregisterLoginResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest struct {
+			// Removed 紐付けを外した端末数 (0 でも 200)
+			Removed int `json:"removed"`
+		}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseSendNotificationResponse parses an HTTP response from a SendNotificationWithResponse call
 func ParseSendNotificationResponse(rsp *http.Response) (*SendNotificationResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -1260,12 +1624,18 @@ type ServerInterface interface {
 	// RegisterDevice 端末を登録 / 更新する
 	// (POST /v1/devices)
 	RegisterDevice(w http.ResponseWriter, r *http.Request)
-	// UnregisterDevice 端末の登録を解除する (ログアウト時)
+	// UnregisterDevice 端末の登録を解除する (全ログイン ID の紐付けごと削除)
 	// (DELETE /v1/devices/{installationId})
 	UnregisterDevice(w http.ResponseWriter, r *http.Request, installationId InstallationId)
 	// GetDevice 端末を取得する
 	// (GET /v1/devices/{installationId})
 	GetDevice(w http.ResponseWriter, r *http.Request, installationId InstallationId)
+	// UnregisterDeviceLogin 端末から特定のログイン ID の紐付けだけを外す (そのユーザーのログアウト時)
+	// (DELETE /v1/devices/{installationId}/logins/{loginId})
+	UnregisterDeviceLogin(w http.ResponseWriter, r *http.Request, installationId InstallationId, loginId string)
+	// UnregisterLogin ログイン ID を全端末から外す (サーバー間)
+	// (DELETE /v1/logins/{loginId})
+	UnregisterLogin(w http.ResponseWriter, r *http.Request, loginId string)
 	// SendNotification ログイン ID 宛にプッシュ通知を送る
 	// (POST /v1/notifications)
 	SendNotification(w http.ResponseWriter, r *http.Request)
@@ -1351,6 +1721,67 @@ func (siw *ServerInterfaceWrapper) GetDevice(w http.ResponseWriter, r *http.Requ
 
 	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		siw.Handler.GetDevice(w, r, installationId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UnregisterDeviceLogin operation middleware
+func (siw *ServerInterfaceWrapper) UnregisterDeviceLogin(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "installationId" -------------
+	var installationId InstallationId
+
+	err = runtime.BindStyledParameterWithOptions("simple", "installationId", r.PathValue("installationId"), &installationId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "installationId", Err: err})
+		return
+	}
+
+	// ------------- Path parameter "loginId" -------------
+	var loginId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "loginId", r.PathValue("loginId"), &loginId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "loginId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UnregisterDeviceLogin(w, r, installationId, loginId)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// UnregisterLogin operation middleware
+func (siw *ServerInterfaceWrapper) UnregisterLogin(w http.ResponseWriter, r *http.Request) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "loginId" -------------
+	var loginId string
+
+	err = runtime.BindStyledParameterWithOptions("simple", "loginId", r.PathValue("loginId"), &loginId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandlerFunc(w, r, &InvalidParamFormatError{ParamName: "loginId", Err: err})
+		return
+	}
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.UnregisterLogin(w, r, loginId)
 	}))
 
 	for _, middleware := range siw.HandlerMiddlewares {
@@ -1498,6 +1929,8 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/devices", wrapper.RegisterDevice)
 	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/devices/{installationId}", wrapper.UnregisterDevice)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/v1/devices/{installationId}", wrapper.GetDevice)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/devices/{installationId}/logins/{loginId}", wrapper.UnregisterDeviceLogin)
+	m.HandleFunc(http.MethodDelete+" "+options.BaseURL+"/v1/logins/{loginId}", wrapper.UnregisterLogin)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/v1/notifications", wrapper.SendNotification)
 
 	return m
@@ -1660,6 +2093,76 @@ func (response GetDevice404JSONResponse) VisitGetDeviceResponse(w http.ResponseW
 	return err
 }
 
+type UnregisterDeviceLoginRequestObject struct {
+	InstallationId InstallationId `json:"installationId"`
+	LoginId        string         `json:"loginId"`
+}
+
+type UnregisterDeviceLoginResponseObject interface {
+	VisitUnregisterDeviceLoginResponse(w http.ResponseWriter) error
+}
+
+type UnregisterDeviceLogin204Response struct {
+}
+
+func (response UnregisterDeviceLogin204Response) VisitUnregisterDeviceLoginResponse(w http.ResponseWriter) error {
+	w.WriteHeader(204)
+	return nil
+}
+
+type UnregisterDeviceLogin401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response UnregisterDeviceLogin401JSONResponse) VisitUnregisterDeviceLoginResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UnregisterLoginRequestObject struct {
+	LoginId string `json:"loginId"`
+}
+
+type UnregisterLoginResponseObject interface {
+	VisitUnregisterLoginResponse(w http.ResponseWriter) error
+}
+
+type UnregisterLogin200JSONResponse struct {
+	// Removed 紐付けを外した端末数 (0 でも 200)
+	Removed int `json:"removed"`
+}
+
+func (response UnregisterLogin200JSONResponse) VisitUnregisterLoginResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UnregisterLogin401JSONResponse struct{ UnauthorizedJSONResponse }
+
+func (response UnregisterLogin401JSONResponse) VisitUnregisterLoginResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type SendNotificationRequestObject struct {
 	Body *SendNotificationJSONRequestBody
 }
@@ -1718,12 +2221,18 @@ type StrictServerInterface interface {
 	// RegisterDevice 端末を登録 / 更新する
 	// (POST /v1/devices)
 	RegisterDevice(ctx context.Context, request RegisterDeviceRequestObject) (RegisterDeviceResponseObject, error)
-	// UnregisterDevice 端末の登録を解除する (ログアウト時)
+	// UnregisterDevice 端末の登録を解除する (全ログイン ID の紐付けごと削除)
 	// (DELETE /v1/devices/{installationId})
 	UnregisterDevice(ctx context.Context, request UnregisterDeviceRequestObject) (UnregisterDeviceResponseObject, error)
 	// GetDevice 端末を取得する
 	// (GET /v1/devices/{installationId})
 	GetDevice(ctx context.Context, request GetDeviceRequestObject) (GetDeviceResponseObject, error)
+	// UnregisterDeviceLogin 端末から特定のログイン ID の紐付けだけを外す (そのユーザーのログアウト時)
+	// (DELETE /v1/devices/{installationId}/logins/{loginId})
+	UnregisterDeviceLogin(ctx context.Context, request UnregisterDeviceLoginRequestObject) (UnregisterDeviceLoginResponseObject, error)
+	// UnregisterLogin ログイン ID を全端末から外す (サーバー間)
+	// (DELETE /v1/logins/{loginId})
+	UnregisterLogin(ctx context.Context, request UnregisterLoginRequestObject) (UnregisterLoginResponseObject, error)
 	// SendNotification ログイン ID 宛にプッシュ通知を送る
 	// (POST /v1/notifications)
 	SendNotification(ctx context.Context, request SendNotificationRequestObject) (SendNotificationResponseObject, error)
@@ -1875,6 +2384,59 @@ func (sh *strictHandler) GetDevice(w http.ResponseWriter, r *http.Request, insta
 	}
 }
 
+// UnregisterDeviceLogin operation middleware
+func (sh *strictHandler) UnregisterDeviceLogin(w http.ResponseWriter, r *http.Request, installationId InstallationId, loginId string) {
+	var request UnregisterDeviceLoginRequestObject
+
+	request.InstallationId = installationId
+	request.LoginId = loginId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.UnregisterDeviceLogin(ctx, request.(UnregisterDeviceLoginRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "UnregisterDeviceLogin")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(UnregisterDeviceLoginResponseObject); ok {
+		if err := validResponse.VisitUnregisterDeviceLoginResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// UnregisterLogin operation middleware
+func (sh *strictHandler) UnregisterLogin(w http.ResponseWriter, r *http.Request, loginId string) {
+	var request UnregisterLoginRequestObject
+
+	request.LoginId = loginId
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.UnregisterLogin(ctx, request.(UnregisterLoginRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "UnregisterLogin")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(UnregisterLoginResponseObject); ok {
+		if err := validResponse.VisitUnregisterLoginResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // SendNotification operation middleware
 func (sh *strictHandler) SendNotification(w http.ResponseWriter, r *http.Request) {
 	var request SendNotificationRequestObject
@@ -1911,50 +2473,60 @@ func (sh *strictHandler) SendNotification(w http.ResponseWriter, r *http.Request
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"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",
-	"3/FzuLc8byAV1M1sCnoaOyochEp/5X8DAA==",
+	"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",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

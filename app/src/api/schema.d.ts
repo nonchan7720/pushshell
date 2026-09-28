@@ -32,8 +32,9 @@ export interface paths {
         put?: never;
         /**
          * 端末を登録 / 更新する
-         * @description `installationId` をキーに upsert する。同じ端末で別のログイン ID になった場合は
-         *     ログイン ID が付け替えられる。Web アプリのログイン時にアプリが呼び出す。
+         * @description `installationId` をキーに端末を upsert し、`loginId` をその端末に紐付ける。
+         *     端末とログイン ID は多対多 (1 端末に複数アカウント、1 アカウントに複数端末)。
+         *     既に紐付いている場合は端末情報 (トークン等) だけ更新する。Web アプリのログイン時にアプリが呼び出す。
          */
         post: operations["registerDevice"];
         delete?: never;
@@ -55,8 +56,57 @@ export interface paths {
         get: operations["getDevice"];
         put?: never;
         post?: never;
-        /** 端末の登録を解除する (ログアウト時) */
+        /** 端末の登録を解除する (全ログイン ID の紐付けごと削除) */
         delete: operations["unregisterDevice"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/devices/{installationId}/logins/{loginId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                installationId: components["parameters"]["InstallationId"];
+                loginId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * 端末から特定のログイン ID の紐付けだけを外す (そのユーザーのログアウト時)
+         * @description 端末自体とトークンは残るので、別のアカウントでログイン中ならそちらの通知は届き続ける。
+         *     アプリから呼ぶほか、Web アプリのバックエンドがセッション失効時に API キーで呼んでもよい
+         *     (installationId は bridge の `ready` イベントで Web アプリに渡る)。
+         */
+        delete: operations["unregisterDeviceLogin"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/logins/{loginId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                loginId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * ログイン ID を全端末から外す (サーバー間)
+         * @description Web アプリ側でセッションが失効・無効化された (全端末ログアウト、退会など) ときに
+         *     Web アプリのバックエンドから呼ぶ。以後そのログイン ID 宛の通知はどの端末にも届かない。
+         *     端末自体とトークンは残る (別アカウントの通知には影響しない)。
+         */
+        delete: operations["unregisterLogin"];
         options?: never;
         head?: never;
         patch?: never;
@@ -121,9 +171,24 @@ export interface components {
             deviceModel?: string;
             locale?: string;
         };
-        Device: components["schemas"]["DeviceRegistration"] & {
+        /** @description 端末情報 (ログイン ID を含まない DeviceRegistration) */
+        DeviceInfo: {
+            installationId: string;
+            platform: components["schemas"]["Platform"];
+            pushToken?: string;
+            deviceToken?: string;
+            appId?: string;
+            appVersion?: string;
+            buildNumber?: string;
+            osVersion?: string;
+            deviceModel?: string;
+            locale?: string;
+        };
+        Device: components["schemas"]["DeviceInfo"] & {
             /** Format: int64 */
             id: number;
+            /** @description この端末に紐付いているログイン ID (多対多) */
+            loginIds: string[];
             /** Format: date-time */
             createdAt: string;
             /** Format: date-time */
@@ -155,9 +220,11 @@ export interface components {
             failed: number;
             results: components["schemas"]["DeliveryResult"][];
         };
+        /** @description 端末ごとの送信結果。同じ端末に複数の宛先ログイン ID が該当しても 1 通にまとめる */
         DeliveryResult: {
             installationId: string;
-            loginId: string;
+            /** @description リクエストの loginIds のうち、この端末に紐付いていたもの */
+            loginIds: string[];
             /** @enum {string} */
             status: "ok" | "error";
             /** @description プッシュサービスからのエラー内容 */
@@ -291,6 +358,54 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    unregisterDeviceLogin: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                installationId: components["parameters"]["InstallationId"];
+                loginId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 解除した (存在しなかった場合も 204) */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            401: components["responses"]["Unauthorized"];
+        };
+    };
+    unregisterLogin: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                loginId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description 解除した端末数 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        /** @description 紐付けを外した端末数 (0 でも 200) */
+                        removed: number;
+                    };
+                };
             };
             401: components["responses"]["Unauthorized"];
         };

@@ -82,7 +82,7 @@ func TestFCMSender_Send_OK(t *testing.T) {
 }
 
 func TestFCMSender_Send_Unregistered(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		_, _ = w.Write([]byte(`{"error":{"code":404,"message":"Requested entity was not found.","status":"NOT_FOUND","details":[{"@type":"type.googleapis.com/google.firebase.fcm.v1.FcmError","errorCode":"UNREGISTERED"}]}}`))
 	}))
@@ -99,7 +99,7 @@ func TestFCMSender_Send_Unregistered(t *testing.T) {
 }
 
 func TestFCMSender_Send_InvalidArgument(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
 		_, _ = w.Write([]byte(`{"error":{"code":400,"message":"bad token","status":"INVALID_ARGUMENT"}}`))
 	}))
@@ -116,7 +116,7 @@ func TestFCMSender_Send_InvalidArgument(t *testing.T) {
 }
 
 func TestFCMSender_Send_OtherError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		_, _ = w.Write([]byte(`{"error":{"code":500,"message":"internal","status":"INTERNAL"}}`))
 	}))
@@ -134,7 +134,7 @@ func TestFCMSender_Send_OtherError(t *testing.T) {
 
 func TestFCMSender_Send_NoDeviceToken(t *testing.T) {
 	called := false
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		called = true
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{}`))

@@ -43,8 +43,9 @@ paths:
       operationId: registerDevice
       summary: 端末を登録 / 更新する
       description: |
-        `installationId` をキーに upsert する。同じ端末で別のログイン ID になった場合は
-        ログイン ID が付け替えられる。Web アプリのログイン時にアプリが呼び出す。
+        `installationId` をキーに端末を upsert し、`loginId` をその端末に紐付ける。
+        端末とログイン ID は多対多 (1 端末に複数アカウント、1 アカウントに複数端末)。
+        既に紐付いている場合は端末情報 (トークン等) だけ更新する。Web アプリのログイン時にアプリが呼び出す。
       security:
         - {}
         - bearerAuth: []
@@ -89,13 +90,75 @@ paths:
     delete:
       tags: [devices]
       operationId: unregisterDevice
-      summary: 端末の登録を解除する (ログアウト時)
+      summary: 端末の登録を解除する (全ログイン ID の紐付けごと削除)
       security:
         - {}
         - bearerAuth: []
       responses:
         "204":
           description: 解除した (存在しなかった場合も 204)
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/devices/{installationId}/logins/{loginId}:
+    parameters:
+      - $ref: "#/components/parameters/InstallationId"
+      - name: loginId
+        in: path
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 256
+    delete:
+      tags: [devices]
+      operationId: unregisterDeviceLogin
+      summary: 端末から特定のログイン ID の紐付けだけを外す (そのユーザーのログアウト時)
+      description: |
+        端末自体とトークンは残るので、別のアカウントでログイン中ならそちらの通知は届き続ける。
+        アプリから呼ぶほか、Web アプリのバックエンドがセッション失効時に API キーで呼んでもよい
+        (installationId は bridge の `ready` イベントで Web アプリに渡る)。
+      security:
+        - {}
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        "204":
+          description: 解除した (存在しなかった場合も 204)
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/logins/{loginId}:
+    parameters:
+      - name: loginId
+        in: path
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 256
+    delete:
+      tags: [devices]
+      operationId: unregisterLogin
+      summary: ログイン ID を全端末から外す (サーバー間)
+      description: |
+        Web アプリ側でセッションが失効・無効化された (全端末ログアウト、退会など) ときに
+        Web アプリのバックエンドから呼ぶ。以後そのログイン ID 宛の通知はどの端末にも届かない。
+        端末自体とトークンは残る (別アカウントの通知には影響しない)。
+      security:
+        - apiKeyAuth: []
+      responses:
+        "200":
+          description: 解除した端末数
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [removed]
+                properties:
+                  removed:
+                    type: integer
+                    description: 紐付けを外した端末数 (0 でも 200)
         "401":
           $ref: "#/components/responses/Unauthorized"
 
@@ -244,15 +307,56 @@ components:
           type: string
           maxLength: 32
 
+    DeviceInfo:
+      type: object
+      description: 端末情報 (ログイン ID を含まない DeviceRegistration)
+      required: [installationId, platform]
+      properties:
+        installationId:
+          type: string
+          minLength: 1
+          maxLength: 128
+        platform:
+          $ref: "#/components/schemas/Platform"
+        pushToken:
+          type: string
+          maxLength: 512
+        deviceToken:
+          type: string
+          maxLength: 4096
+        appId:
+          type: string
+          maxLength: 256
+        appVersion:
+          type: string
+          maxLength: 64
+        buildNumber:
+          type: string
+          maxLength: 64
+        osVersion:
+          type: string
+          maxLength: 64
+        deviceModel:
+          type: string
+          maxLength: 128
+        locale:
+          type: string
+          maxLength: 32
+
     Device:
       allOf:
-        - $ref: "#/components/schemas/DeviceRegistration"
+        - $ref: "#/components/schemas/DeviceInfo"
         - type: object
-          required: [id, createdAt, updatedAt]
+          required: [id, loginIds, createdAt, updatedAt]
           properties:
             id:
               type: integer
               format: int64
+            loginIds:
+              type: array
+              description: この端末に紐付いているログイン ID (多対多)
+              items:
+                type: string
             createdAt:
               type: string
               format: date-time
@@ -311,12 +415,16 @@ components:
 
     DeliveryResult:
       type: object
-      required: [installationId, loginId, status]
+      description: 端末ごとの送信結果。同じ端末に複数の宛先ログイン ID が該当しても 1 通にまとめる
+      required: [installationId, loginIds, status]
       properties:
         installationId:
           type: string
-        loginId:
-          type: string
+        loginIds:
+          type: array
+          description: リクエストの loginIds のうち、この端末に紐付いていたもの
+          items:
+            type: string
         status:
           type: string
           enum: [ok, error]
