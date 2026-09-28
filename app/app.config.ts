@@ -54,6 +54,10 @@ if (!["none", "software", "hardware"].includes(WEBVIEW_ANDROID_LAYER_TYPE)) {
   throw new Error(`WEBVIEW_ANDROID_LAYER_TYPE は none / software / hardware のいずれか (got: ${WEBVIEW_ANDROID_LAYER_TYPE})`);
 }
 
+// http:// の Web アプリ / バックエンドを使う場合 (ローカル開発、エミュレータでの検証) に true。
+// 本番は https のみにして false のままにすること。
+const ANDROID_USES_CLEARTEXT_TRAFFIC = env("ANDROID_USES_CLEARTEXT_TRAFFIC", "false") === "true";
+
 // 通知の配送方式。バックエンドの PUSH_PROVIDER と揃える。
 //   expo:   Expo Push Token を登録する (EAS_PROJECT_ID が必要)
 //   native: FCM / APNs のネイティブトークンだけを登録する (Expo のプロジェクト不要)
@@ -144,9 +148,12 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
         // WebView・通知・secure-store など複数のネイティブモジュールを併用するため、
         // iOS の Swift シンボル重複を避ける定番設定として static framework を使う。
         ios: { useFrameworks: "static" },
+        android: { usesCleartextTraffic: ANDROID_USES_CLEARTEXT_TRAFFIC },
       },
     ],
     "expo-dev-client",
+    // release ビルドの署名 (ANDROID_KEYSTORE_* が設定されているときだけ有効)
+    "./plugins/withReleaseSigning.js",
   ],
   extra: {
     ...config.extra,

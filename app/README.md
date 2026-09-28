@@ -43,6 +43,9 @@ cp .env.example .env
 | `ALLOWED_ORIGINS` | WebView / bridge が許可する origin (カンマ区切り) | `WEBAPP_URL` の origin |
 | `EAS_PROJECT_ID` | EAS の projectId (`PUSH_PROVIDER=expo` で Expo Push Token の取得に必須) | なし |
 | `PUSH_PROVIDER` | 通知の配送方式。`expo` (Expo Push Service) か `native` (FCM / APNs をバックエンドが直接叩く)。バックエンドの `PUSH_PROVIDER` と揃える | `expo` |
+| `WEBVIEW_ANDROID_LAYER_TYPE` | Android WebView の描画レイヤー (`none` / `software` / `hardware`)。GPU の無い環境で WebView が落ちるときに `software` | `none` |
+| `ANDROID_USES_CLEARTEXT_TRAFFIC` | `http://` を許可する (ローカル開発・エミュレータ検証用。本番は `false`) | `false` |
+| `ANDROID_KEYSTORE_PATH` / `ANDROID_KEYSTORE_PASSWORD` / `ANDROID_KEY_ALIAS` / `ANDROID_KEY_PASSWORD` | release ビルドの署名 (`plugins/withReleaseSigning.js`)。未設定なら debug keystore | なし |
 | `GOOGLE_SERVICES_JSON` | Android で FCM を使う場合の `google-services.json` パス | なし |
 
 `assets/` に置いてある PNG (icon.png, android-icon-*.png, splash-icon.png, favicon.png) は

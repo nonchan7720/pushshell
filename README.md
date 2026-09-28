@@ -122,5 +122,14 @@ mysql / postgres の migration 生成には Atlas の dev database として Doc
 
 ## CI
 
-`.github/workflows/ci.yml` が PR ごとに、生成コードが最新か・vet / lint / test・
-CGO なしビルド・migration の整合・アプリの typecheck を検証します。
+| ワークフロー | トリガー | 内容 |
+|---|---|---|
+| `ci.yml` | PR / main への push | 生成コードが最新か、vet / lint / test、CGO なしビルド、migration の整合、アプリの typecheck |
+| `android-apk.yml` | 手動 (`workflow_dispatch`) | input で `APP_NAME` / `ANDROID_PACKAGE` / `WEBAPP_URL` / `API_BASE_URL` / `PUSH_PROVIDER` などを指定して APK をビルドし Artifact に保存。Secrets に `ANDROID_KEYSTORE_BASE64` 等があれば release 署名、`GOOGLE_SERVICES_JSON_BASE64` があれば FCM 設定を同梱 |
+| `android-emulator.yml` | 手動 (`workflow_dispatch`) | KVM を有効化した ubuntu ランナーでエミュレータを起動し、release APK (x86_64) を入れて起動。ランナー上のバックエンド (`PUSH_PROVIDER=log`) と `examples/webapp` に `10.0.2.2` で接続し、スクリーンショットと logcat を Artifact に保存 |
+
+`android-apk.yml` は `workflow_call` でも呼べるので、他のワークフローから再利用できます。
+アクションはすべてコミット SHA で固定しています。
+
+エミュレータのスモークテスト本体は `scripts/android/emulator-smoke.sh` で、ローカルでも
+`mise run android:emulator` でエミュレータを起動したあと `mise run android:smoke` で同じ確認ができます。

@@ -239,6 +239,10 @@ run = [
   "ls -la android/app/build/outputs/apk/debug/",
 ]
 
+[tasks."android:smoke"]
+description = "接続中のエミュレータ/端末に debug APK を入れて起動し、スクリーンショットと logcat を保存 (scripts/android/emulator-smoke.sh)"
+run = "bash scripts/android/emulator-smoke.sh app/android/app/build/outputs/apk/debug/app-debug.apk ${SMOKE_OUT_DIR:-out/android-smoke}"
+
 [tasks."app:install:android"]
 description = "ビルド済み debug APK を接続中の端末 / エミュレータにインストール"
 dir = "app"

@@ -1,0 +1,220 @@
+name: Android APK
+
+# 手動実行 (workflow_dispatch) で、ビルド時に注入する設定を input として受け取り
+# APK をビルドして Artifact に保存する。android-emulator.yml からも workflow_call で再利用する。
+#
+# 任意の Secrets:
+#   GOOGLE_SERVICES_JSON_BASE64  google-services.json を base64 したもの (FCM を使う場合)
+#   ANDROID_KEYSTORE_BASE64      release 署名用 keystore を base64 したもの
+#   ANDROID_KEYSTORE_PASSWORD / ANDROID_KEY_ALIAS / ANDROID_KEY_PASSWORD
+#   未設定なら debug keystore で署名される (検証用)。
+
+on:
+  workflow_dispatch:
+    inputs:
+      app_name:
+        description: "アプリ名 (APP_NAME)"
+        type: string
+        default: "WebApp"
+      app_slug:
+        description: "Expo slug (APP_SLUG)"
+        type: string
+        default: "webapp-notification"
+      app_scheme:
+        description: "URL スキーム (APP_SCHEME)"
+        type: string
+        default: "webappnotification"
+      app_version:
+        description: "バージョン (APP_VERSION)"
+        type: string
+        default: "1.0.0"
+      android_package:
+        description: "パッケージ名 (ANDROID_PACKAGE)"
+        type: string
+        default: "com.example.webappnotification"
+      webapp_url:
+        description: "WebView に表示する URL (WEBAPP_URL)"
+        type: string
+        default: "https://example.com"
+      api_base_url:
+        description: "バックエンド URL (API_BASE_URL)"
+        type: string
+        default: "https://example.com/api"
+      allowed_origins:
+        description: "許可 origin (ALLOWED_ORIGINS, カンマ区切り。空なら WEBAPP_URL の origin)"
+        type: string
+        default: ""
+      push_provider:
+        description: "通知の配送方式 (PUSH_PROVIDER)"
+        type: choice
+        options: [expo, native]
+        default: expo
+      eas_project_id:
+        description: "EAS projectId (PUSH_PROVIDER=expo で必要)"
+        type: string
+        default: ""
+      uses_cleartext_traffic:
+        description: "http:// を許可する (ANDROID_USES_CLEARTEXT_TRAFFIC)"
+        type: boolean
+        default: false
+      webview_android_layer_type:
+        description: "WebView の描画レイヤー (WEBVIEW_ANDROID_LAYER_TYPE)"
+        type: choice
+        options: [none, software, hardware]
+        default: none
+      build_type:
+        description: "ビルド種別"
+        type: choice
+        options: [release, debug]
+        default: release
+      architectures:
+        description: "ABI (reactNativeArchitectures。例: arm64-v8a,armeabi-v7a,x86_64)"
+        type: string
+        default: "arm64-v8a,armeabi-v7a"
+      use_google_services:
+        description: "Secrets の GOOGLE_SERVICES_JSON_BASE64 を使う"
+        type: boolean
+        default: false
+  workflow_call:
+    inputs:
+      app_name: { type: string, default: "WebApp" }
+      app_slug: { type: string, default: "webapp-notification" }
+      app_scheme: { type: string, default: "webappnotification" }
+      app_version: { type: string, default: "1.0.0" }
+      android_package: { type: string, default: "com.example.webappnotification" }
+      webapp_url: { type: string, default: "https://example.com" }
+      api_base_url: { type: string, default: "https://example.com/api" }
+      allowed_origins: { type: string, default: "" }
+      push_provider: { type: string, default: "expo" }
+      eas_project_id: { type: string, default: "" }
+      uses_cleartext_traffic: { type: boolean, default: false }
+      webview_android_layer_type: { type: string, default: "none" }
+      build_type: { type: string, default: "release" }
+      architectures: { type: string, default: "arm64-v8a,armeabi-v7a" }
+      use_google_services: { type: boolean, default: false }
+    outputs:
+      artifact_name:
+        description: "アップロードした Artifact 名"
+        value: ${{ jobs.build.outputs.artifact_name }}
+      apk_path:
+        description: "Artifact 内の APK ファイル名"
+        value: ${{ jobs.build.outputs.apk_path }}
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build (${{ inputs.build_type }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    outputs:
+      artifact_name: ${{ steps.meta.outputs.artifact_name }}
+      apk_path: ${{ steps.meta.outputs.apk_path }}
+    env:
+      # app.config.ts が読む値。すべて input から注入する
+      APP_NAME: ${{ inputs.app_name }}
+      APP_SLUG: ${{ inputs.app_slug }}
+      APP_SCHEME: ${{ inputs.app_scheme }}
+      APP_VERSION: ${{ inputs.app_version }}
+      ANDROID_PACKAGE: ${{ inputs.android_package }}
+      WEBAPP_URL: ${{ inputs.webapp_url }}
+      API_BASE_URL: ${{ inputs.api_base_url }}
+      ALLOWED_ORIGINS: ${{ inputs.allowed_origins }}
+      PUSH_PROVIDER: ${{ inputs.push_provider }}
+      EAS_PROJECT_ID: ${{ inputs.eas_project_id }}
+      ANDROID_USES_CLEARTEXT_TRAFFIC: ${{ inputs.uses_cleartext_traffic }}
+      WEBVIEW_ANDROID_LAYER_TYPE: ${{ inputs.webview_android_layer_type }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          install: true
+          cache: true
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Cache Android SDK
+        id: sdk-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.android-sdk
+          key: android-sdk-${{ runner.os }}-${{ hashFiles('scripts/android/install-sdk.sh', '.mise.toml') }}
+      - name: Install Android SDK
+        if: steps.sdk-cache.outputs.cache-hit != 'true'
+        run: mise run android:sdk
+
+      - name: Cache Gradle
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('app/package-lock.json') }}
+          restore-keys: gradle-${{ runner.os }}-
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.npm
+          key: npm-${{ runner.os }}-${{ hashFiles('app/package-lock.json') }}
+          restore-keys: npm-${{ runner.os }}-
+
+      - name: Install app dependencies
+        run: cd app && npm ci
+
+      - name: Prepare google-services.json
+        if: ${{ inputs.use_google_services }}
+        env:
+          GOOGLE_SERVICES_JSON_BASE64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
+        run: |
+          if [ -z "$GOOGLE_SERVICES_JSON_BASE64" ]; then
+            echo "::error::use_google_services=true ですが Secrets の GOOGLE_SERVICES_JSON_BASE64 が未設定です"; exit 1
+          fi
+          echo "$GOOGLE_SERVICES_JSON_BASE64" | base64 -d > app/google-services.json
+          echo "GOOGLE_SERVICES_JSON=./google-services.json" >> "$GITHUB_ENV"
+
+      - name: Prepare release keystore
+        if: ${{ inputs.build_type == 'release' }}
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+            {
+              echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/release.keystore"
+              echo "ANDROID_KEYSTORE_PASSWORD=${{ secrets.ANDROID_KEYSTORE_PASSWORD }}"
+              echo "ANDROID_KEY_ALIAS=${{ secrets.ANDROID_KEY_ALIAS }}"
+              echo "ANDROID_KEY_PASSWORD=${{ secrets.ANDROID_KEY_PASSWORD }}"
+            } >> "$GITHUB_ENV"
+            echo "release keystore を使用します"
+          else
+            echo "::notice::ANDROID_KEYSTORE_BASE64 が未設定のため debug keystore で署名します (ストア配布不可)"
+          fi
+
+      - name: Resolve Expo config
+        run: cd app && npx expo config --type public | head -60
+
+      - name: Prebuild (android/)
+        run: cd app && npx expo prebuild --platform android --no-install
+
+      - name: Build APK
+        run: |
+          cd app/android
+          task=assembleRelease
+          [ "${{ inputs.build_type }}" = "debug" ] && task=assembleDebug
+          ./gradlew "$task" -PreactNativeArchitectures=${{ inputs.architectures }} --no-daemon
+
+      - name: Collect APK
+        id: meta
+        run: |
+          apk=$(ls app/android/app/build/outputs/apk/${{ inputs.build_type }}/*.apk | head -1)
+          name="${{ inputs.app_slug }}-${{ inputs.app_version }}-${{ inputs.build_type }}.apk"
+          mkdir -p out && cp "$apk" "out/$name"
+          echo "artifact_name=android-apk-${{ inputs.build_type }}-${{ github.run_id }}" >> "$GITHUB_OUTPUT"
+          echo "apk_path=$name" >> "$GITHUB_OUTPUT"
+          ls -la out
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: android-apk-${{ inputs.build_type }}-${{ github.run_id }}
+          path: out/*.apk
+          retention-days: 14
+          if-no-files-found: error

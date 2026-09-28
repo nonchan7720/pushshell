@@ -150,3 +150,6 @@ backend/*.db-*
 .env
 .env.local
 app/src/api/schema.d.ts.tmp
+
+# smoke test outputs
+out/
