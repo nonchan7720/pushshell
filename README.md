@@ -70,6 +70,28 @@ curl -X POST http://localhost:8080/v1/notifications \
 | `API_BASE_URL` | バックエンド URL |
 | `EAS_PROJECT_ID` | Expo Push Token に必要 |
 
+## Android をローカルでビルド・実行する
+
+JDK 17 は mise が入れます。Android SDK は mise のプラグインで管理できないため、
+`mise run android:sdk` が `$ANDROID_HOME` (既定 `~/.android-sdk`) に必要なパッケージ
+(platform-tools, platform 36, build-tools 36.0.0, NDK 27.1, cmake 3.22.1) をインストールします。
+環境変数 (`ANDROID_HOME`, `PATH`) は `.mise.toml` の `[env]` で設定済みです。
+
+```sh
+mise install                        # JDK 17 など
+mise run android:sdk                # Android SDK 本体
+mise run app:build:android:local    # expo prebuild + gradlew assembleDebug → app/android/app/build/outputs/apk/debug/
+
+# エミュレータで動かす場合
+mise run android:avd:create         # emulator + system image + AVD 作成
+mise run android:emulator           # 起動 (KVM が無ければソフトウェアエミュレーション)
+mise run app:install:android        # APK をインストール
+mise run app:run:android            # Metro 付きで実行 (expo run:android)
+```
+
+実機なら USB デバッグを有効にして `mise run android:devices` で見えることを確認し、
+`mise run app:run:android` を実行してください。
+
 ## 開発タスク
 
 | タスク | 内容 |
@@ -79,7 +101,9 @@ curl -X POST http://localhost:8080/v1/notifications \
 | `mise run backend:run` / `backend:test` / `backend:lint` | バックエンド |
 | `mise run db:diff <name> --dialect sqlite\|mysql\|postgres` | ent スキーマから migration 生成 |
 | `mise run db:apply` / `db:status` / `db:lint` | Atlas で migration 適用・確認 |
-| `mise run app:start` / `app:typecheck` / `app:build:android` / `app:build:ios` | アプリ |
+| `mise run app:start` / `app:typecheck` / `app:build:android` / `app:build:ios` | アプリ (EAS Build) |
+| `mise run android:sdk` / `android:avd:create` / `android:emulator` / `android:devices` | Android SDK とエミュレータ |
+| `mise run app:build:android:local` / `app:install:android` / `app:run:android` | ローカル Android ビルド・実行 |
 
 DB は `DB_DIALECT` (sqlite / mysql / postgres) と `DB_DSN`、Atlas 用に `ATLAS_URL` で切り替えます。
 mysql / postgres の migration 生成には Atlas の dev database として Docker が必要です。
