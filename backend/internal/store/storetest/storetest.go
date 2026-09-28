@@ -10,7 +10,7 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/nonchan7720/webapp-notification/backend/internal/core"
+	"github.com/nonchan7720/pushshell/backend/internal/core"
 )
 
 // RunStoreTests runs the full contract suite against a fresh store built by

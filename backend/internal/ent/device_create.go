@@ -11,8 +11,8 @@ import (
 	"entgo.io/ent/dialect/sql"
 	"entgo.io/ent/dialect/sql/sqlgraph"
 	"entgo.io/ent/schema/field"
-	"github.com/nonchan7720/webapp-notification/backend/internal/ent/device"
-	"github.com/nonchan7720/webapp-notification/backend/internal/ent/devicelogin"
+	"github.com/nonchan7720/pushshell/backend/internal/ent/device"
+	"github.com/nonchan7720/pushshell/backend/internal/ent/devicelogin"
 )
 
 // DeviceCreate is the builder for creating a Device entity.

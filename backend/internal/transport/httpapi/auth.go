@@ -5,8 +5,8 @@ import (
 	"crypto/subtle"
 	"net/http"
 
-	"github.com/nonchan7720/webapp-notification/backend/internal/api"
-	"github.com/nonchan7720/webapp-notification/backend/internal/core"
+	"github.com/nonchan7720/pushshell/backend/internal/api"
+	"github.com/nonchan7720/pushshell/backend/internal/core"
 )
 
 // apiKeyOperations is which operations (api.StrictServerInterface method

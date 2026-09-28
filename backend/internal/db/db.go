@@ -15,8 +15,8 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib" // pgx driver (database/sql)
 	_ "modernc.org/sqlite"             // cgo-free sqlite driver
 
-	"github.com/nonchan7720/webapp-notification/backend/internal/config"
-	"github.com/nonchan7720/webapp-notification/backend/internal/ent"
+	"github.com/nonchan7720/pushshell/backend/internal/config"
+	"github.com/nonchan7720/pushshell/backend/internal/ent"
 )
 
 // Open は設定に従って ent クライアントを開く。

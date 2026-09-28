@@ -27,8 +27,8 @@ cp .env.example .env
 | 変数 | 説明 | デフォルト |
 |---|---|---|
 | `APP_NAME` | アプリ名 | `WebApp` |
-| `APP_SLUG` | Expo の slug | `webapp-notification` |
-| `APP_SCHEME` | カスタム URL スキーム | `webappnotification` |
+| `APP_SLUG` | Expo の slug | `pushshell` |
+| `APP_SCHEME` | カスタム URL スキーム | `pushshell` |
 | `APP_VERSION` | アプリバージョン (`runtimeVersion` にも使う) | `1.0.0` |
 | `APP_ICON` | アプリアイコン画像のパス | `./assets/icon.png` |
 | `APP_ADAPTIVE_ICON_FOREGROUND` | Android adaptive icon の前景画像 | `./assets/android-icon-foreground.png` |
@@ -36,8 +36,8 @@ cp .env.example .env
 | `APP_ADAPTIVE_ICON_MONOCHROME` | Android 13+ monochrome icon | `./assets/android-icon-monochrome.png` |
 | `APP_SPLASH_IMAGE` | スプラッシュ画像 | `./assets/splash-icon.png` |
 | `APP_SPLASH_BACKGROUND` | スプラッシュ背景色 | `#FFFFFF` |
-| `IOS_BUNDLE_ID` | iOS bundle identifier | `com.example.webappnotification` |
-| `ANDROID_PACKAGE` | Android package name | `com.example.webappnotification` |
+| `IOS_BUNDLE_ID` | iOS bundle identifier | `com.example.pushshell` |
+| `ANDROID_PACKAGE` | Android package name | `com.example.pushshell` |
 | `WEBAPP_URL` | WebView に表示する Web アプリの URL | `https://example.com` |
 | `API_BASE_URL` | バックエンド (Go) の URL | `http://localhost:8080` |
 | `ALLOWED_ORIGINS` | WebView / bridge が許可する origin (カンマ区切り) | `WEBAPP_URL` の origin |

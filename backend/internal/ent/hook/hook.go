@@ -6,7 +6,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/nonchan7720/webapp-notification/backend/internal/ent"
+	"github.com/nonchan7720/pushshell/backend/internal/ent"
 )
 
 // The DeviceFunc type is an adapter to allow the use of ordinary

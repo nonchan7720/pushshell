@@ -5,7 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/nonchan7720/webapp-notification/backend/internal/core"
+	"github.com/nonchan7720/pushshell/backend/internal/core"
 )
 
 // mapError is the fallback for errors that reach api.StrictHTTPServerOptions.ResponseErrorHandlerFunc:

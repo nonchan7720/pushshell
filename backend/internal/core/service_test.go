@@ -8,8 +8,8 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/nonchan7720/webapp-notification/backend/internal/core"
-	"github.com/nonchan7720/webapp-notification/backend/internal/push"
+	"github.com/nonchan7720/pushshell/backend/internal/core"
+	"github.com/nonchan7720/pushshell/backend/internal/push"
 )
 
 // fakeStore is an in-memory core.Store good enough to exercise Service: it

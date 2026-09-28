@@ -20,7 +20,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/nonchan7720/webapp-notification/backend/internal/core"
+	"github.com/nonchan7720/pushshell/backend/internal/core"
 )
 
 // timeLayout is the wire format created_at/updated_at are stored as: it

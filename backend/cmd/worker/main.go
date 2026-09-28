@@ -30,11 +30,11 @@ import (
 	"github.com/syumai/workers-go/cloudflare"
 	"github.com/syumai/workers-go/cloudflare/d1"
 
-	"github.com/nonchan7720/webapp-notification/backend/internal/app"
-	"github.com/nonchan7720/webapp-notification/backend/internal/config"
-	"github.com/nonchan7720/webapp-notification/backend/internal/core"
-	"github.com/nonchan7720/webapp-notification/backend/internal/store/sqlstore"
-	"github.com/nonchan7720/webapp-notification/backend/internal/transport/httpapi"
+	"github.com/nonchan7720/pushshell/backend/internal/app"
+	"github.com/nonchan7720/pushshell/backend/internal/config"
+	"github.com/nonchan7720/pushshell/backend/internal/core"
+	"github.com/nonchan7720/pushshell/backend/internal/store/sqlstore"
+	"github.com/nonchan7720/pushshell/backend/internal/transport/httpapi"
 )
 
 // d1Binding is the D1 binding name this worker expects, matching

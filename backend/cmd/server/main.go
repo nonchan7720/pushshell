@@ -14,13 +14,13 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/nonchan7720/webapp-notification/backend/internal/app"
-	"github.com/nonchan7720/webapp-notification/backend/internal/config"
-	"github.com/nonchan7720/webapp-notification/backend/internal/core"
-	"github.com/nonchan7720/webapp-notification/backend/internal/db"
-	"github.com/nonchan7720/webapp-notification/backend/internal/store/entstore"
-	"github.com/nonchan7720/webapp-notification/backend/internal/transport/httpapi"
-	"github.com/nonchan7720/webapp-notification/backend/internal/transport/httpapi/openapivalidate"
+	"github.com/nonchan7720/pushshell/backend/internal/app"
+	"github.com/nonchan7720/pushshell/backend/internal/config"
+	"github.com/nonchan7720/pushshell/backend/internal/core"
+	"github.com/nonchan7720/pushshell/backend/internal/db"
+	"github.com/nonchan7720/pushshell/backend/internal/store/entstore"
+	"github.com/nonchan7720/pushshell/backend/internal/transport/httpapi"
+	"github.com/nonchan7720/pushshell/backend/internal/transport/httpapi/openapivalidate"
 )
 
 func main() {

@@ -11,11 +11,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nonchan7720/webapp-notification/backend/internal/api"
-	"github.com/nonchan7720/webapp-notification/backend/internal/core"
-	"github.com/nonchan7720/webapp-notification/backend/internal/push"
-	"github.com/nonchan7720/webapp-notification/backend/internal/transport/httpapi"
-	"github.com/nonchan7720/webapp-notification/backend/internal/transport/httpapi/openapivalidate"
+	"github.com/nonchan7720/pushshell/backend/internal/api"
+	"github.com/nonchan7720/pushshell/backend/internal/core"
+	"github.com/nonchan7720/pushshell/backend/internal/push"
+	"github.com/nonchan7720/pushshell/backend/internal/transport/httpapi"
+	"github.com/nonchan7720/pushshell/backend/internal/transport/httpapi/openapivalidate"
 )
 
 const testAPIKey = "test-api-key"

@@ -10,8 +10,8 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/nonchan7720/webapp-notification/backend/internal/config"
-	"github.com/nonchan7720/webapp-notification/backend/internal/push"
+	"github.com/nonchan7720/pushshell/backend/internal/config"
+	"github.com/nonchan7720/pushshell/backend/internal/push"
 )
 
 // NewLogger builds the process-wide *slog.Logger from LOG_LEVEL

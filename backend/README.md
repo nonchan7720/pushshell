@@ -598,7 +598,7 @@ mise run worker:install
 
 # 2. D1 データベースを作成 (初回のみ。表示される database_id を
 #    backend/worker/wrangler.toml の [[d1_databases]] database_id に貼る)
-cd backend/worker && npx wrangler login && npx wrangler d1 create webapp-notification
+cd backend/worker && npx wrangler login && npx wrangler d1 create pushshell
 cd ../..
 
 # 3. secrets (本番)。PUSH_PROVIDER=log 以外を使うなら必要な分だけ

@@ -12,10 +12,10 @@ import * as SecureStore from "expo-secure-store";
  * 単一の login 情報ではなく一覧として保持する。
  */
 
-const INSTALLATION_ID_KEY = "webapp_notification.installation_id";
-const LOGINS_KEY = "webapp_notification.logins";
+const INSTALLATION_ID_KEY = "pushshell.installation_id";
+const LOGINS_KEY = "pushshell.logins";
 // 旧バージョン (単一ログインのみ保持していた頃) のキー。移行用に読むだけ。
-const LEGACY_LOGIN_STATE_KEY = "webapp_notification.login_state";
+const LEGACY_LOGIN_STATE_KEY = "pushshell.login_state";
 
 let cachedInstallationId: string | null = null;
 

@@ -1,4 +1,4 @@
-# webapp-notification
+# pushshell (プッシェル)
 
 Web アプリを WebView で表示し、プッシュ通知だけをネイティブ側で担うアプリのテンプレートと、
 その通知バックエンドのモノレポです。
@@ -97,7 +97,7 @@ mise run app:run:android            # Metro 付きで実行 (expo run:android)
 | 変数 | 内容 | 既定 |
 |---|---|---|
 | `ANDROID_SYSTEM_IMAGE_TAG` | `google_apis` (Play services あり。FCM の確認に必要) か `default` (AOSP のみ。軽い) | `google_apis` |
-| `ANDROID_AVD_NAME` | AVD 名 | `webapp-notification` |
+| `ANDROID_AVD_NAME` | AVD 名 | `pushshell` |
 | `ANDROID_EMULATOR_EXTRA_ARGS` | `emulator` に渡す追加引数 (例: `-cores 2 -memory 3072`) | なし |
 
 KVM が使えない環境 (CI コンテナなど) ではソフトウェアエミュレーションになり、起動に 20〜30 分かかることがあります。

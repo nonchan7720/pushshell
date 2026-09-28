@@ -27,11 +27,11 @@ on:
       app_slug:
         description: "Expo slug (APP_SLUG)"
         type: string
-        default: "webapp-notification"
+        default: "pushshell"
       app_scheme:
         description: "URL スキーム (APP_SCHEME)"
         type: string
-        default: "webappnotification"
+        default: "pushshell"
       app_version:
         description: "バージョン (APP_VERSION)"
         type: string
@@ -39,7 +39,7 @@ on:
       android_package:
         description: "パッケージ名 (ANDROID_PACKAGE)"
         type: string
-        default: "com.example.webappnotification"
+        default: "com.example.pushshell"
       webapp_url:
         description: "WebView に表示する URL (WEBAPP_URL)"
         type: string
@@ -91,10 +91,10 @@ on:
   workflow_call:
     inputs:
       app_name: { type: string, default: "WebApp" }
-      app_slug: { type: string, default: "webapp-notification" }
-      app_scheme: { type: string, default: "webappnotification" }
+      app_slug: { type: string, default: "pushshell" }
+      app_scheme: { type: string, default: "pushshell" }
       app_version: { type: string, default: "1.0.0" }
-      android_package: { type: string, default: "com.example.webappnotification" }
+      android_package: { type: string, default: "com.example.pushshell" }
       webapp_url: { type: string, default: "https://example.com" }
       api_base_url: { type: string, default: "https://example.com/api" }
       allowed_origins: { type: string, default: "" }
@@ -134,7 +134,7 @@ jobs:
       BUILD_TYPE: ${{ inputs.build_type || 'release' }}
       OUTPUT: ${{ inputs.output || 'apk' }}
       ARCHITECTURES: ${{ inputs.architectures || 'arm64-v8a,armeabi-v7a' }}
-      ARTIFACT_SLUG: ${{ inputs.app_slug || 'webapp-notification' }}
+      ARTIFACT_SLUG: ${{ inputs.app_slug || 'pushshell' }}
       ARTIFACT_VERSION: ${{ inputs.app_version || '1.0.0' }}
       # app.config.ts が読む値。すべて input から注入する
       APP_NAME: ${{ inputs.app_name }}

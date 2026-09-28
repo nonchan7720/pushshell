@@ -40,7 +40,7 @@ import (
 	"github.com/jackc/pgx/v5/stdlib"   // pgx driver (database/sql), for the dev-url connection
 	"modernc.org/sqlite"
 
-	entmigrate "github.com/nonchan7720/webapp-notification/backend/internal/ent/migrate"
+	entmigrate "github.com/nonchan7720/pushshell/backend/internal/ent/migrate"
 )
 
 func init() {

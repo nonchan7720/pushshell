@@ -107,7 +107,7 @@ jobs:
           force-avd-creation: false
           emulator-options: -no-snapshot-save -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           disable-animations: true
-          script: bash scripts/android/emulator-smoke.sh "out/apk/${{ needs.apk.outputs.apk_path }}" out/smoke com.example.webappnotification 30 60 120
+          script: bash scripts/android/emulator-smoke.sh "out/apk/${{ needs.apk.outputs.apk_path }}" out/smoke com.example.pushshell 30 60 120
 
       - name: Collect logs
         if: always()

@@ -10,9 +10,9 @@ import (
 
 	_ "modernc.org/sqlite" // sqlite driver, registered as "sqlite"
 
-	"github.com/nonchan7720/webapp-notification/backend/internal/config"
-	"github.com/nonchan7720/webapp-notification/backend/internal/db"
-	"github.com/nonchan7720/webapp-notification/backend/internal/ent/device"
+	"github.com/nonchan7720/pushshell/backend/internal/config"
+	"github.com/nonchan7720/pushshell/backend/internal/db"
+	"github.com/nonchan7720/pushshell/backend/internal/ent/device"
 )
 
 // TestSQLiteMigrationMatchesEntSchema is a regression check for the committed

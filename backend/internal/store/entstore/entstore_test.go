@@ -8,11 +8,11 @@ import (
 	"entgo.io/ent/dialect"
 	entsql "entgo.io/ent/dialect/sql"
 
-	"github.com/nonchan7720/webapp-notification/backend/internal/core"
-	"github.com/nonchan7720/webapp-notification/backend/internal/ent"
-	"github.com/nonchan7720/webapp-notification/backend/internal/ent/enttest"
-	"github.com/nonchan7720/webapp-notification/backend/internal/store/entstore"
-	"github.com/nonchan7720/webapp-notification/backend/internal/store/storetest"
+	"github.com/nonchan7720/pushshell/backend/internal/core"
+	"github.com/nonchan7720/pushshell/backend/internal/ent"
+	"github.com/nonchan7720/pushshell/backend/internal/ent/enttest"
+	"github.com/nonchan7720/pushshell/backend/internal/store/entstore"
+	"github.com/nonchan7720/pushshell/backend/internal/store/storetest"
 
 	_ "modernc.org/sqlite" // cgo-free sqlite driver, registered as "sqlite"
 )

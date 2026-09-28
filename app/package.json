@@ -1,5 +1,5 @@
 {
-  "name": "webapp-notification-app",
+  "name": "pushshell-app",
   "version": "1.0.0",
   "main": "index.ts",
   "dependencies": {

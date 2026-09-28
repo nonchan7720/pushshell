@@ -1,7 +1,7 @@
 [
   {
     "title": "POST /v1/devices → 200",
-    "body": "{\n  \"appId\": \"com.example.webappnotification\",\n  \"appVersion\": \"1.0.0\",\n  \"buildNumber\": \"1\",\n  \"createdAt\": \"2026-09-28T12:49:25.774787156Z\",\n  \"deviceModel\": \"Pixel 8\",\n  \"id\": 2,\n  \"installationId\": \"demo-installation-0001\",\n  \"locale\": \"ja-JP\",\n  \"loginId\": \"user-123\",\n  \"osVersion\": \"14\",\n  \"platform\": \"android\",\n  \"pushToken\": \"ExponentPushToken[demo-xxxxxxxxxxxxxxxxxxxx]\",\n  \"updatedAt\": \"2026-09-28T12:49:25.774787926Z\"\n}"
+    "body": "{\n  \"appId\": \"com.example.pushshell\",\n  \"appVersion\": \"1.0.0\",\n  \"buildNumber\": \"1\",\n  \"createdAt\": \"2026-09-28T12:49:25.774787156Z\",\n  \"deviceModel\": \"Pixel 8\",\n  \"id\": 2,\n  \"installationId\": \"demo-installation-0001\",\n  \"locale\": \"ja-JP\",\n  \"loginId\": \"user-123\",\n  \"osVersion\": \"14\",\n  \"platform\": \"android\",\n  \"pushToken\": \"ExponentPushToken[demo-xxxxxxxxxxxxxxxxxxxx]\",\n  \"updatedAt\": \"2026-09-28T12:49:25.774787926Z\"\n}"
   },
   {
     "title": "POST /v1/notifications (X-API-Key) → 200",

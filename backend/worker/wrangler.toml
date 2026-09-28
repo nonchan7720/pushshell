@@ -1,14 +1,14 @@
-name = "webapp-notification-api"
+name = "pushshell-api"
 main = "./build/worker.mjs"
 compatibility_date = "2026-09-01"
 
 # D1 (SQLite-compatible). `binding` must match d1Binding in
 # ../cmd/worker/main.go. Create the DB once with:
-#   npx wrangler d1 create webapp-notification
+#   npx wrangler d1 create pushshell
 # then paste the database_id it prints below.
 [[d1_databases]]
 binding = "DB"
-database_name = "webapp-notification"
+database_name = "pushshell"
 database_id = "<your-d1-database-id>"
 migrations_dir = "migrations"
 

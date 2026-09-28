@@ -22,7 +22,7 @@ ANDROID_PLATFORM = "{{ get_env(name='ANDROID_PLATFORM', default='android-36') }}
 ANDROID_BUILD_TOOLS = "{{ get_env(name='ANDROID_BUILD_TOOLS', default='36.0.0') }}"
 ANDROID_NDK_VERSION = "{{ get_env(name='ANDROID_NDK_VERSION', default='27.1.12297006') }}"
 ANDROID_CMAKE_VERSION = "{{ get_env(name='ANDROID_CMAKE_VERSION', default='3.22.1') }}"
-ANDROID_AVD_NAME = "{{ get_env(name='ANDROID_AVD_NAME', default='webapp-notification') }}"
+ANDROID_AVD_NAME = "{{ get_env(name='ANDROID_AVD_NAME', default='pushshell') }}"
 # system image のタグ。google_apis (Play services あり、FCM の確認に必要) か
 # default (AOSP のみ。軽いので KVM が無い環境や WebView の確認向け)
 ANDROID_SYSTEM_IMAGE_TAG = "{{ get_env(name='ANDROID_SYSTEM_IMAGE_TAG', default='google_apis') }}"
@@ -140,12 +140,12 @@ run = "./smoke.sh"
 [tasks."worker:migrate:local"]
 description = "D1 migration をローカル (wrangler dev / Miniflare) に適用"
 dir = "backend/worker"
-run = "npx wrangler d1 migrations apply webapp-notification --local"
+run = "npx wrangler d1 migrations apply pushshell --local"
 
 [tasks."worker:migrate:remote"]
 description = "D1 migration を本番の D1 データベースに適用 (要 wrangler login / database_id 設定)"
 dir = "backend/worker"
-run = "npx wrangler d1 migrations apply webapp-notification --remote"
+run = "npx wrangler d1 migrations apply pushshell --remote"
 
 [tasks."worker:deploy"]
 description = "worker:build の後 wrangler deploy"

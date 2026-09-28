@@ -18,8 +18,8 @@ const env = (name: string, fallback?: string): string | undefined => {
 };
 
 const APP_NAME = env("APP_NAME", "WebApp")!;
-const APP_SLUG = env("APP_SLUG", "webapp-notification")!;
-const APP_SCHEME = env("APP_SCHEME", "webappnotification")!;
+const APP_SLUG = env("APP_SLUG", "pushshell")!;
+const APP_SCHEME = env("APP_SCHEME", "pushshell")!;
 const APP_VERSION = env("APP_VERSION", "1.0.0")!;
 
 // アイコン類。プレースホルダーの PNG を assets/ に置いてあるので、
@@ -37,8 +37,8 @@ const APP_ADAPTIVE_ICON_MONOCHROME = env(
 const APP_SPLASH_IMAGE = env("APP_SPLASH_IMAGE", "./assets/splash-icon.png")!;
 const APP_SPLASH_BACKGROUND = env("APP_SPLASH_BACKGROUND", "#FFFFFF")!;
 
-const IOS_BUNDLE_ID = env("IOS_BUNDLE_ID", "com.example.webappnotification")!;
-const ANDROID_PACKAGE = env("ANDROID_PACKAGE", "com.example.webappnotification")!;
+const IOS_BUNDLE_ID = env("IOS_BUNDLE_ID", "com.example.pushshell")!;
+const ANDROID_PACKAGE = env("ANDROID_PACKAGE", "com.example.pushshell")!;
 
 // WebView に表示する URL とバックエンドの URL。
 const WEBAPP_URL = env("WEBAPP_URL", "https://example.com")!;

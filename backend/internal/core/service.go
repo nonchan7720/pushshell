@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 
-	"github.com/nonchan7720/webapp-notification/backend/internal/push"
+	"github.com/nonchan7720/pushshell/backend/internal/push"
 )
 
 // ErrUnauthorized is returned by Service methods (and Authorizer

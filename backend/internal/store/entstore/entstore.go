@@ -1,5 +1,5 @@
 // Package entstore implements core.Store on top of ent
-// (github.com/nonchan7720/webapp-notification/backend/internal/ent), the
+// (github.com/nonchan7720/pushshell/backend/internal/ent), the
 // same way internal/handler used to query the database directly. Only
 // cmd/server (and internal/db.Open, sqlite/mysql/postgres) uses this
 // package; cmd/worker uses internal/store/sqlstore instead, so the
@@ -11,10 +11,10 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/nonchan7720/webapp-notification/backend/internal/core"
-	"github.com/nonchan7720/webapp-notification/backend/internal/ent"
-	"github.com/nonchan7720/webapp-notification/backend/internal/ent/device"
-	"github.com/nonchan7720/webapp-notification/backend/internal/ent/devicelogin"
+	"github.com/nonchan7720/pushshell/backend/internal/core"
+	"github.com/nonchan7720/pushshell/backend/internal/ent"
+	"github.com/nonchan7720/pushshell/backend/internal/ent/device"
+	"github.com/nonchan7720/pushshell/backend/internal/ent/devicelogin"
 )
 
 // Store implements core.Store on an *ent.Client.

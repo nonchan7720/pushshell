@@ -5,12 +5,12 @@ package enttest
 import (
 	"context"
 
-	"github.com/nonchan7720/webapp-notification/backend/internal/ent"
+	"github.com/nonchan7720/pushshell/backend/internal/ent"
 	// required by schema hooks.
-	_ "github.com/nonchan7720/webapp-notification/backend/internal/ent/runtime"
+	_ "github.com/nonchan7720/pushshell/backend/internal/ent/runtime"
 
 	"entgo.io/ent/dialect/sql/schema"
-	"github.com/nonchan7720/webapp-notification/backend/internal/ent/migrate"
+	"github.com/nonchan7720/pushshell/backend/internal/ent/migrate"
 )
 
 type (

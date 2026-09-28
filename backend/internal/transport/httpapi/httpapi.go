@@ -20,8 +20,8 @@ import (
 	"runtime/debug"
 	"time"
 
-	"github.com/nonchan7720/webapp-notification/backend/internal/api"
-	"github.com/nonchan7720/webapp-notification/backend/internal/core"
+	"github.com/nonchan7720/pushshell/backend/internal/api"
+	"github.com/nonchan7720/pushshell/backend/internal/core"
 )
 
 // Options configures New.

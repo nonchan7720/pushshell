@@ -24,7 +24,7 @@ import (
 	"github.com/getkin/kin-openapi/routers"
 	middleware "github.com/oapi-codegen/nethttp-middleware"
 
-	"github.com/nonchan7720/webapp-notification/backend/internal/api"
+	"github.com/nonchan7720/pushshell/backend/internal/api"
 )
 
 // Middleware builds the kin-openapi request validator: full body/parameter

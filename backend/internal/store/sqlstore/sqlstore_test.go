@@ -10,9 +10,9 @@ import (
 
 	_ "modernc.org/sqlite" // cgo-free sqlite driver, registered as "sqlite"
 
-	"github.com/nonchan7720/webapp-notification/backend/internal/core"
-	"github.com/nonchan7720/webapp-notification/backend/internal/store/sqlstore"
-	"github.com/nonchan7720/webapp-notification/backend/internal/store/storetest"
+	"github.com/nonchan7720/pushshell/backend/internal/core"
+	"github.com/nonchan7720/pushshell/backend/internal/store/sqlstore"
+	"github.com/nonchan7720/pushshell/backend/internal/store/storetest"
 )
 
 func TestStore(t *testing.T) {

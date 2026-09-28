@@ -11,9 +11,9 @@ import (
 
 	"entgo.io/ent"
 	"entgo.io/ent/dialect/sql"
-	"github.com/nonchan7720/webapp-notification/backend/internal/ent/device"
-	"github.com/nonchan7720/webapp-notification/backend/internal/ent/devicelogin"
-	"github.com/nonchan7720/webapp-notification/backend/internal/ent/predicate"
+	"github.com/nonchan7720/pushshell/backend/internal/ent/device"
+	"github.com/nonchan7720/pushshell/backend/internal/ent/devicelogin"
+	"github.com/nonchan7720/pushshell/backend/internal/ent/predicate"
 )
 
 const (

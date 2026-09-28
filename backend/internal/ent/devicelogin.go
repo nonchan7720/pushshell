@@ -9,8 +9,8 @@ import (
 
 	"entgo.io/ent"
 	"entgo.io/ent/dialect/sql"
-	"github.com/nonchan7720/webapp-notification/backend/internal/ent/device"
-	"github.com/nonchan7720/webapp-notification/backend/internal/ent/devicelogin"
+	"github.com/nonchan7720/pushshell/backend/internal/ent/device"
+	"github.com/nonchan7720/pushshell/backend/internal/ent/devicelogin"
 )
 
 // DeviceLogin is the model entity for the DeviceLogin schema.

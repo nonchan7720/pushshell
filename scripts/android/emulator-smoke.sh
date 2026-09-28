@@ -10,7 +10,7 @@ set -euo pipefail
 
 APK="${1:?apk path}"
 OUT="${2:?output dir}"
-PACKAGE="${3:-com.example.webappnotification}"
+PACKAGE="${3:-com.example.pushshell}"
 shift 3 2>/dev/null || shift $#
 SHOT_TIMES=("$@")
 if [ ${#SHOT_TIMES[@]} -eq 0 ]; then SHOT_TIMES=(20 45 90); fi

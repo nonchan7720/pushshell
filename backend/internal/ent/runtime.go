@@ -5,9 +5,9 @@ package ent
 import (
 	"time"
 
-	"github.com/nonchan7720/webapp-notification/backend/internal/ent/device"
-	"github.com/nonchan7720/webapp-notification/backend/internal/ent/devicelogin"
-	"github.com/nonchan7720/webapp-notification/backend/internal/ent/schema"
+	"github.com/nonchan7720/pushshell/backend/internal/ent/device"
+	"github.com/nonchan7720/pushshell/backend/internal/ent/devicelogin"
+	"github.com/nonchan7720/pushshell/backend/internal/ent/schema"
 )
 
 // The init function reads all schema descriptors with runtime code

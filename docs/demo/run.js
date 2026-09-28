@@ -35,7 +35,7 @@ const log = (title, body) => evidence.push({ title, body });
         const body = {
           loginId: msg.loginId, installationId, platform: "android",
           pushToken: "ExponentPushToken[demo-xxxxxxxxxxxxxxxxxxxx]",
-          appId: "com.example.webappnotification", appVersion: "1.0.0", buildNumber: "1",
+          appId: "com.example.pushshell", appVersion: "1.0.0", buildNumber: "1",
           osVersion: "14", deviceModel: "Pixel 8", locale: "ja-JP",
         };
         const res = await fetch(`${API}/v1/devices`, {

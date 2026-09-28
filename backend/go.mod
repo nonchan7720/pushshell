@@ -1,4 +1,4 @@
-module github.com/nonchan7720/webapp-notification/backend
+module github.com/nonchan7720/pushshell/backend
 
 go 1.26.8
 
