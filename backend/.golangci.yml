@@ -14,6 +14,7 @@ linters:
     paths:
       - internal/ent
       - internal/api/api.gen.go
+      - internal/transport/httpapi/openapivalidate/spec.gen.go
 formatters:
   enable:
     - gofmt
@@ -22,3 +23,4 @@ formatters:
     paths:
       - internal/ent
       - internal/api/api.gen.go
+      - internal/transport/httpapi/openapivalidate/spec.gen.go

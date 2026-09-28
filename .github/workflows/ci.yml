@@ -50,6 +50,42 @@ jobs:
           DB_DIALECT: sqlite
           ATLAS_URL: sqlite://${{ runner.temp }}/ci.db
 
+  worker:
+    name: worker (cloudflare wasm)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          install: true
+          cache: true
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/go/pkg/mod
+          key: gomod-${{ runner.os }}-${{ hashFiles('backend/go.sum') }}
+          restore-keys: gomod-${{ runner.os }}-
+      - name: Vet worker build (js/wasm)
+        run: cd backend && GOOS=js GOARCH=wasm go vet ./cmd/worker/...
+      - name: Worker must not link ent / atlas / kin-openapi
+        run: |
+          cd backend
+          deps=$(GOOS=js GOARCH=wasm go list -deps ./cmd/worker | grep -E 'entgo.io|ariga.io|getkin/kin-openapi' || true)
+          if [ -n "$deps" ]; then echo "::error::worker links heavy deps:"; echo "$deps"; exit 1; fi
+      - name: Build worker wasm
+        run: mise run worker:install && mise run worker:build
+      - name: "Size gate (Cloudflare Workers free plan, 3 MB gzip)"
+        run: |
+          raw=$(stat -c %s backend/worker/build/app.wasm)
+          gz=$(gzip -9 -c backend/worker/build/app.wasm | wc -c)
+          echo "app.wasm raw=$raw bytes, gzip=$gz bytes"
+          echo "### Worker wasm size" >> "$GITHUB_STEP_SUMMARY"
+          echo "- raw: $((raw / 1024)) KiB" >> "$GITHUB_STEP_SUMMARY"
+          echo "- gzip: $((gz / 1024)) KiB (limit 3072 KiB)" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$gz" -gt $((3 * 1024 * 1024)) ]; then
+            echo "::error::app.wasm gzip size $gz bytes exceeds the 3 MB free-plan limit"; exit 1
+          fi
+
   app:
     name: app (expo)
     runs-on: ubuntu-latest

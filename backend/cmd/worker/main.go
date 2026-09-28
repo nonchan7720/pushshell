@@ -3,11 +3,13 @@
 // Command worker is the Cloudflare Workers + D1 entrypoint for this
 // notification backend. It is compiled to wasm (GOOS=js GOARCH=wasm, see
 // backend/worker/build.sh) and served by github.com/syumai/workers-go
-// (workers.Serve), reusing internal/handler, internal/server, internal/push
-// and internal/ent completely unchanged — only D1 (via database/sql + ent's
-// SQLite dialect, same as cmd/server's sqlite path) and the Workers
-// runtime environment stand in for cmd/server's net/http.Server and
-// internal/db.Open.
+// (workers.Serve). Unlike cmd/server it does not link ent, atlas or
+// kin-openapi: internal/core (the business logic) is stdlib-only, and this
+// entrypoint reaches D1 through internal/store/sqlstore (plain
+// database/sql, hand-written SQL) instead of internal/db.Open + ent's
+// SQLite dialect, and builds internal/transport/httpapi's handler without a
+// Validator (internal/transport/httpapi/openapivalidate, which does depend
+// on kin-openapi, is cmd/server-only).
 //
 // Unlike cmd/server there is no ADDR to listen on (the Workers runtime owns
 // the fetch event), no os/signal-driven graceful shutdown (a Worker's
@@ -24,16 +26,15 @@ import (
 	"net/http"
 	"os"
 
-	"entgo.io/ent/dialect"
-	entsql "entgo.io/ent/dialect/sql"
 	workers "github.com/syumai/workers-go"
 	"github.com/syumai/workers-go/cloudflare"
+	"github.com/syumai/workers-go/cloudflare/d1"
 
 	"github.com/nonchan7720/webapp-notification/backend/internal/app"
 	"github.com/nonchan7720/webapp-notification/backend/internal/config"
-	"github.com/nonchan7720/webapp-notification/backend/internal/ent"
-	"github.com/nonchan7720/webapp-notification/backend/internal/handler"
-	"github.com/nonchan7720/webapp-notification/backend/internal/server"
+	"github.com/nonchan7720/webapp-notification/backend/internal/core"
+	"github.com/nonchan7720/webapp-notification/backend/internal/store/sqlstore"
+	"github.com/nonchan7720/webapp-notification/backend/internal/transport/httpapi"
 )
 
 // d1Binding is the D1 binding name this worker expects, matching
@@ -82,7 +83,7 @@ func run() error {
 	logger := app.NewLogger(cfg.LogLevel)
 	slog.SetDefault(logger)
 
-	client, err := openD1()
+	sqlDB, err := openD1()
 	if err != nil {
 		return err
 	}
@@ -92,8 +93,8 @@ func run() error {
 		return err
 	}
 
-	h := handler.New(client, sender, handler.AllowAll{}, logger)
-	mux, err := server.New(server.Options{Handler: h, APIKey: cfg.APIKey, Logger: logger})
+	svc := core.New(sqlstore.New(sqlDB), sender, core.AllowAll{}, logger)
+	mux, err := httpapi.New(httpapi.Options{Service: svc, APIKey: cfg.APIKey, Logger: logger})
 	if err != nil {
 		return err
 	}
@@ -119,22 +120,23 @@ func loadEnvFromWorkersRuntime() {
 }
 
 // openD1 opens the D1 database bound as d1Binding in wrangler.toml
-// ([[d1_databases]] binding = "DB") through database/sql, wrapped by ent's
-// SQLite dialect exactly like internal/db.Open does for cmd/server's sqlite
-// path — D1 speaks SQLite. Note D1's driver.Conn does not support
-// transactions (BeginTx returns an error); internal/handler never opens one
-// (client.Tx), so this is not a practical limitation for this backend.
+// ([[d1_databases]] binding = "DB") through database/sql — D1 speaks
+// SQLite. internal/store/sqlstore binds every query argument itself as a
+// string/int64/nil (never a time.Time), which are exactly the kinds
+// syscall/js.Value.Call (used by d1.Stmt under the hood) can represent, so
+// no adapter is needed here (a previous version of this file wrapped the
+// connector to convert time.Time query arguments/results for ent's sake;
+// sqlstore has no such argument to begin with).
 //
-// openTimeSafeD1Connector (d1time.go), not d1.OpenConnector directly, is
-// what makes this work at all: see its package doc for why.
-func openD1() (*ent.Client, error) {
-	connector, err := openTimeSafeD1Connector(d1Binding)
+// Note D1's driver.Conn does not support transactions (BeginTx returns an
+// error); internal/core/service.go never opens one, so this is not a
+// practical limitation for this backend.
+func openD1() (*sql.DB, error) {
+	connector, err := d1.OpenConnector(d1Binding)
 	if err != nil {
 		return nil, fmt.Errorf("worker: open D1 binding %q: %w", d1Binding, err)
 	}
-	sqlDB := sql.OpenDB(connector)
-	drv := entsql.OpenDB(dialect.SQLite, sqlDB)
-	return ent.NewClient(ent.Driver(drv)), nil
+	return sql.OpenDB(connector), nil
 }
 
 // serveStartupError makes a startup failure visible as an HTTP 500 (and in

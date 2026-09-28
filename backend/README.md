@@ -8,18 +8,28 @@ WebView + プッシュ通知アプリ向けの通知バックエンド。Go 製�
 ```
 backend/
 ├── cmd/
-│   ├── server/           # サーバー本体 (main)。net/http + sqlite/mysql/postgres
-│   ├── worker/           # Cloudflare Workers + D1 向け entrypoint (js/wasm 専用。後述)
+│   ├── server/           # サーバー本体 (main)。net/http + sqlite/mysql/postgres + ent
+│   ├── worker/           # Cloudflare Workers + D1 向け entrypoint (js/wasm 専用。後述。ent/atlas/kin-openapi を一切リンクしない)
 │   └── migrate/          # migration ファイル生成 CLI (ent + Atlas を Go ライブラリとして呼ぶ)
 ├── internal/
 │   ├── app/                # cmd/server・cmd/worker 共通の組み立て (push.Sender / logger)
 │   ├── config/            # 環境変数 → Config
-│   ├── db/                # dialect ごとに ent.Client を開く (cmd/server 専用。cmd/worker は D1 を直接開く)
-│   ├── ent/                # ent (生成コード)。スキーマは internal/ent/schema/{device,device_login}.go
-│   ├── api/                # oapi-codegen 生成コード (../openapi/openapi.yaml から)
-│   ├── handler/            # api.StrictServerInterface の実装 (ビジネスロジック)
-│   ├── push/                # プッシュ通知の送信 (Sender インターフェース。既定は Expo Push API)
-│   └── server/              # http.Handler の組み立て (OpenAPI バリデーション・認証・ロギング)
+│   ├── core/               # ドメインロジック (stdlib のみ: ent も internal/api も net/http も使わない)。
+│   │                       #   Device/DeviceInput モデル、Store インターフェース、Service (ユースケース)、
+│   │                       #   バリデーション (openapi.yaml の制約と同じもの)。cmd/server・cmd/worker 共通。
+│   ├── store/
+│   │   ├── entstore/       # core.Store の ent 実装 (cmd/server 専用)
+│   │   ├── sqlstore/        # core.Store の database/sql (素の SQL) 実装。ent 非依存で cmd/worker が使う (D1 / modernc sqlite 両対応)
+│   │   └── storetest/       # entstore/sqlstore 共通の契約テストスイート
+│   ├── db/                 # dialect ごとに ent.Client を開く (cmd/server 専用。cmd/worker は D1 を database/sql で直接開く)
+│   ├── ent/                 # ent (生成コード)。スキーマは internal/ent/schema/{device,device_login}.go。cmd/server (経由の entstore) のみが使う
+│   ├── api/                 # oapi-codegen 生成コード (../openapi/openapi.yaml から): models + std-http-server + strict-server + client
+│   │                        #   (go:generate は internal/api/generate.go。ルーティング/パラメータ束縛/JSON デコードは全て生成コード)
+│   ├── transport/
+│   │   └── httpapi/         # api.StrictServerInterface の実装 (server.go。internal/core を呼ぶ) + http.Handler の組み立て
+│   │       │                #   (X-API-Key 認証・bearer 抽出・ロギング・panic recover)。ent/kin-openapi 非依存
+│   │       └── openapivalidate/  # kin-openapi によるフル OpenAPI リクエストバリデーション (cmd/server 専用。cmd/worker は使わない)
+│   └── push/                # プッシュ通知の送信 (Sender インターフェース。既定は Expo Push API)
 ├── migrations/
 │   ├── sqlite/             # versioned migration (.sql + atlas.sum)
 │   ├── mysql/
@@ -30,12 +40,38 @@ backend/
 ```
 
 `cmd/server` (net/http + sqlite/mysql/postgres、通常のデプロイ先) と
-`cmd/worker` (Cloudflare Workers + D1) はどちらも `internal/handler` /
-`internal/server` / `internal/push` / `internal/api` / `internal/ent` を
-まったく同じコードで使う (フォークしていない)。両者が異なるのは DB の
-開き方 (`internal/db.Open` vs D1) と `push.Sender` の組み立て方の
-入口 (`internal/app.BuildSender` は共通) だけ。詳細は
+`cmd/worker` (Cloudflare Workers + D1) は `internal/core` (ドメインロジック・
+バリデーション) と `internal/push` / `internal/transport/httpapi` /
+`internal/api` をまったく同じコードで使う (フォークしていない)。両者が
+異なるのは **永続化層と DB の開き方** (`cmd/server` は `internal/db.Open`
++ ent + `internal/store/entstore`、`cmd/worker` は D1 を `database/sql`
+で直接開いて `internal/store/sqlstore` に渡す — どちらも `internal/core.Store`
+インターフェースの実装で、`internal/store/storetest` の同じ契約テストで
+検証されている) と、**OpenAPI リクエストバリデーション**
+(`cmd/server` だけが `internal/transport/httpapi/openapivalidate`
+[kin-openapi] を追加で使う。`cmd/worker` はバリデーションを
+`internal/core` のもの [validate.go] だけで行う — 両ビルドとも入力検証自体は
+必ず通る) だけ。`push.Sender` の組み立て方の入口 (`internal/app.BuildSender`)
+は共通。詳細は
 「[Cloudflare Workers + D1 で動かす](#cloudflare-workers--d1-で動かす)」を参照。
+この分離により `cmd/worker` (`GOOS=js GOARCH=wasm`) は ent / Atlas /
+kin-openapi のいずれもリンクしない (`go list -deps ./cmd/worker` で確認可能)。
+
+`internal/api` はサーバー側も含めて oapi-codegen の生成コード
+(`oapi-codegen.yaml`: `models` + `std-http-server` + `strict-server` +
+`client`) — ルーティング (`net/http.ServeMux`, Go 1.22+ の
+`METHOD /path/{param}` パターン)、パス/クエリパラメータの束縛、リクエスト
+ボディの JSON デコード、レスポンスの型付けは全て `api.gen.go` が担い、
+`internal/transport/httpapi` は `api.StrictServerInterface` を実装する
+(`server.go`) だけで、ルートを手書きしない。X-API-Key チェックは strict
+middleware (`auth.go`, `apiKeyMiddleware`: 操作 ID が apiKeyAuth のものか
+で判定) で行う — `internal/transport/httpapi/openapivalidate`
+(kin-openapi) の中ではなく httpapi 自身の中にあるので、`Validator` を
+組み込まない `cmd/worker` でも API キーは必ず検証される。生成コードが
+依存する `github.com/oapi-codegen/runtime` (+ `google/uuid`、
+`apapsch/go-jsonmerge`) は wasm では **gzip で 50KB 弱**で、Workers の
+サイズ上限に対して問題にならない (後述「サイズ」)。生成クライアント
+(`ClientWithResponses`) は `internal/transport/httpapi` のテストが使う。
 
 データモデルは `Device` と `DeviceLogin` の 2 テーブル
 (`internal/ent/schema/device.go`, `internal/ent/schema/device_login.go`)。
@@ -128,7 +164,17 @@ APNs device token の hex) の両方 (もしくはどちらか一方) を送っ�
   Program のアカウントと認証情報が必要になる (下記)。`FCM_*` /
   `APNS_*` のどちらか一方だけ設定してもよい (その OS のみネイティブ送信可能
   になり、もう一方の OS 向けメッセージはエラーになる。両方とも未設定だと
-  起動時エラーで落ちる)。
+  起動時エラーで落ちる)。FCM (サービスアカウントの JWT bearer 認証) も
+  APNs (`.p8` の token-based 認証) も、サードパーティの push SDK
+  (`golang.org/x/oauth2`, `github.com/sideshow/apns2` 等) は使わず、
+  `internal/push` 内で `crypto/rsa` (FCM: RS256) /
+  `crypto/ecdsa` (APNs: ES256) を使って JWT の組み立て・署名を自前で行う
+  (依存を Go 標準ライブラリ [+ wasm ビルド時の
+  `github.com/syumai/workers-go/cloudflare/fetch` フック] だけに保つための
+  実装。「Cloudflare Workers + D1 で動かす」の節を参照)。取得したアクセス
+  トークン / provider token は `FCMSender` / `APNSSender` 内でそれぞれ有効期限
+  の少し手前 (FCM: ~1 分前、APNs: ~50 分ごと) までメモリ上にキャッシュし、
+  送信のたびに取り直すことはしない。
 - **`log`**: 送信せずログに出すだけ (`push.LogSender`)。ローカル開発・smoke
   test 向け。
 
@@ -294,7 +340,7 @@ OpenAPI 定義は `../openapi/openapi.yaml`。認証は 2 種類:
 - `Authorization: Bearer <token>` — 端末登録・解除
   (`POST /v1/devices`, `DELETE /v1/devices/{installationId}`,
   `DELETE /v1/devices/{installationId}/logins/{loginId}`)。既定の
-  `handler.AllowAll` はトークンを検証しないが、`handler.Authorizer` を
+  `core.AllowAll` はトークンを検証しないが、`core.Authorizer` を
   実装すれば Web アプリのセッションを検証できる (下記)
 
 ```sh
@@ -341,27 +387,45 @@ curl -X DELETE localhost:8080/v1/logins/u1 -H 'X-API-Key: dev'
   v1, `fcm.go`)、`push.APNSSender` (APNs token 認証, `apns.go`)、その二つを
   `Message.Platform` で振り分ける `push.NativeSender` (`native.go`) を持つ。
   独自のバックエンドに送りたい場合やテストで送信を記録したい場合は
-  `Sender` を実装して `handler.New(..., sender, ...)` に渡す
+  `Sender` を実装して `core.New(store, sender, authorizer, logger)` に渡す
   (`push.LogSender` は開発用の実装例)。`internal/app.BuildSender`
   (`internal/app/sender.go`。`cmd/server`・`cmd/worker` 共通) が
   `PUSH_PROVIDER` (`expo`/`native`/`log`) に応じて組み立てる。
-- **`handler.Authorizer`** (`internal/handler/auth.go`): 端末登録・解除の
-  認可。既定の `handler.AllowAll` は何も検証しない。Web アプリのセッション
+- **`core.Authorizer`** (`internal/core/service.go`): 端末登録・解除の
+  認可。既定の `core.AllowAll` は何も検証しない。Web アプリのセッション
   Cookie/JWT などを検証したい場合は `AuthorizeDevice(ctx, loginID, token
-  string) error` を実装し、`handler.New(db, sender, myAuthorizer, logger)`
-  に渡す。`token` は `Authorization: Bearer <token>` から取り出した値
-  (`handler.BearerFromRequest` / `handler.WithBearer`)。
+  string) error` を実装し、`core.New(store, sender, myAuthorizer, logger)`
+  に渡す (`cmd/server`・`cmd/worker` どちらも同じ `*core.Service` の作り方)。
+  `token` は `Authorization: Bearer <token>` から取り出した値
+  (`internal/transport/httpapi` が `httpapi.BearerFromRequest` /
+  `httpapi.WithBearer` で受け取り、`core.Service` のメソッドに直接渡す)。
+- **`core.Store`** (`internal/core/store.go`): 永続化の抽象。標準の実装は
+  `internal/store/entstore` (ent。`cmd/server` 用) と
+  `internal/store/sqlstore` (素の `database/sql`。ent 非依存で
+  `cmd/worker`/D1 用)。別の DB に差し替えたい場合はこのインターフェースを
+  実装し、`internal/store/storetest.RunStoreTests` で契約を満たすことを
+  確認できる。
 
 ## Cloudflare Workers + D1 で動かす
 
-`cmd/server` と全く同じ `internal/handler` / `internal/server` /
-`internal/push` / `internal/api` / `internal/ent` を、`cmd/worker`
-(`//go:build js && wasm`) から Cloudflare Workers + D1 の上で動かせる。
-ビジネスロジックは 1 つも fork していない — 差分は「DB の開き方」
-(`internal/db.Open` の代わりに D1 を `database/sql` 越しに直接開く) と
-「エントリポイント」(`net/http.Server` の代わりに
+`cmd/server` と `cmd/worker` (`//go:build js && wasm`) は
+`internal/core` (ドメインロジック・バリデーション、stdlib のみ) /
+`internal/push` / `internal/transport/httpapi` / `internal/api` を
+まったく同じコードで使う。`cmd/worker` は ent / Atlas / kin-openapi の
+**どれもリンクしない** — 永続化は `internal/core.Store` の
+`database/sql` 実装 (`internal/store/sqlstore`、ent 非依存) を D1 に対して
+使い、OpenAPI リクエストバリデーションは `internal/core` 自身の
+バリデーション (`internal/core/validate.go`。`../../openapi/openapi.yaml`
+の制約をそのまま stdlib で実装したもの) だけで行う
+(`internal/transport/httpapi/openapivalidate` の kin-openapi バリデータは
+`cmd/server` だけが `Validator` として追加で差し込む)。差分は
+「永続化層」(`internal/db.Open` + ent + `internal/store/entstore` の代わり
+に D1 を `database/sql` 越しに直接開いて `internal/store/sqlstore` に渡す)
+と「エントリポイント」(`net/http.Server` の代わりに
 [`github.com/syumai/workers-go`](https://pkg.go.dev/github.com/syumai/workers-go)
-の `workers.Serve`) だけ。
+の `workers.Serve`) だけ。`go list -deps ./cmd/worker` で
+`entgo.io/...` / `ariga.io/...` (atlas) / `github.com/getkin/kin-openapi/...`
+のいずれも出てこないことで確認できる。
 
 ### アーキテクチャ
 
@@ -377,8 +441,8 @@ backend/worker/                  # wrangler プロジェクト (npm)
 
 backend/cmd/worker/
 ├── doc.go     (!(js && wasm))    # go build ./... が全 GOOS で通るためのスタブ main
-├── main.go    (js && wasm)       # 本体: config.Load → D1 open → handler.New → server.New → workers.Serve
-└── d1time.go  (js && wasm)       # D1 ドライバの time.Time 対応 (後述)
+└── main.go    (js && wasm)       # 本体: config.Load → D1 open (database/sql) → sqlstore.New →
+                                   #   core.New → httpapi.New (Validator なし) → workers.Serve
 ```
 
 `go run github.com/syumai/workers-go/cmd/workers-assets-gen -mode=go
@@ -397,28 +461,66 @@ wasm に転送する JS グルー) と `wasm_exec.js` を生成し、続けて
   D1 のスキーマは `wrangler d1 migrations` (`backend/worker/migrations/`、
   下記) で管理する。
 - **D1 に対話的トランザクションはない**
-  (`d1.Conn.BeginTx` は常にエラーを返す)。`internal/handler` はそもそも
-  `client.Tx(ctx)` を呼んでいないので、このバックエンドにとっては実害がない。
-- **`time.Time` の変換が必要**: D1 ドライバ
-  (`github.com/syumai/workers-go/cloudflare/d1`) はクエリ引数を
-  `syscall/js.Value.Call` でそのまま JS に渡すが、`js.ValueOf` は
-  `time.Time` (ent の `created_at`/`updated_at`、`internal/ent/schema` の
-  `field.Time`) を扱えず、`mise run worker:dev` + `POST /v1/devices` で
-  実際に `panic: ValueOf: invalid value` になることを確認した。
-  `backend/cmd/worker/d1time.go` が `driver.NamedValueChecker`
-  (書き込み時: `time.Time` → RFC3339Nano 文字列) と `driver.Rows` の
-  ラッパー (読み込み時: 文字列 → `time.Time`) を挟んで対応している。
-  `internal/ent` 側は無変更。
-- **サイズ上限**: `mise run worker:build` が実行時に表示する通り、
-  `app.wasm` は **約 37MB (raw) / 約 8.2MB (gzip)**。Cloudflare Workers の
-  デプロイ上限は無料プランが **3MB (gzip 後)**、有料 (Workers Paid) プランが
-  **10MB (gzip 後)**。したがってこの実装は **Workers Paid プランが必須**
-  (無料プランでは `wrangler deploy` が上限超過で失敗する)。kin-openapi
-  (OpenAPI バリデーション) / ent / apns2 / golang.org/x/oauth2 など依存が
-  多く、これは Go (TinyGo ではない) wasm バイナリとしては妥当なサイズ。
-  さらに縮めたい場合は TinyGo への移植が考えられるが、`golang.org/x/net/http2`
-  や `reflect` を多用する依存 (kin-openapi, ent) との相性次第で別途検証が
-  必要 (未検証)。
+  (`d1.Conn.BeginTx` は常にエラーを返す)。`internal/store/sqlstore` は
+  そもそもトランザクションを開かない (各メソッドが独立した文を 1〜2 個
+  発行するだけ) ので、このバックエンドにとっては実害がない。
+- **`time.Time` は使わない**: 以前は ent の SQLite 方言がクエリ引数に
+  `time.Time` をそのまま渡し、D1 ドライバ
+  (`github.com/syumai/workers-go/cloudflare/d1`) が `syscall/js.Value.Call`
+  でそれを JS に渡そうとして `panic: ValueOf: invalid value` になる問題が
+  あった (`js.ValueOf` は `time.Time` を扱えない)。`internal/store/sqlstore`
+  は `created_at`/`updated_at` を自前で RFC3339Nano 文字列にフォーマットして
+  bind し、読み込み時にパースし直す (ent が SQLite に書き込む形式と同じ
+  フォーマットなので `entstore`/`sqlstore` は同じ DB 上で相互運用できる)
+  ため、D1 に渡る値は常に string/int64/nil だけになり、この変換レイヤー
+  (旧 `cmd/worker/d1time.go`) 自体が不要になった。
+- **サイズ**: `mise run worker:build` が実行時に表示する通り、
+  `app.wasm` は現在 **約 7.98MB (raw) / 約 2.15MB (gzip -9)** で、
+  Cloudflare Workers の無料プランの上限 **3MB (gzip 後、3,145,728 バイト)**
+  を約 1MB 下回る (有料 [Workers Paid] プランの上限は 10MB)。
+  `.github/workflows/ci.yml` の `worker` ジョブが同じ 3,145,728 バイトで
+  size gate をかけているので、超えた時点で CI が落ちる。
+  ent / atlas / kin-openapi を切り離す前は約 37MB (raw) / 約 8.1MB (gzip)
+  だった。内訳 (同じビルドフラグで層ごとに計測した値):
+
+  | 含めるもの | raw | gzip -9 |
+  |---|---|---|
+  | `workers.Serve` + 固定レスポンスのハンドラだけ (workers-go + net/http サーバー側) | 5.29MB | 1.49MB |
+  | + `database/sql` + D1 ドライバ + `internal/store/sqlstore` | 5.46MB | 1.54MB |
+  | + `internal/core` + `internal/transport/httpapi` + `internal/api` (生成サーバー) + `log/slog` (`PUSH_PROVIDER=log`) | 7.11MB | 1.95MB |
+  | + `push.ExpoSender` (outbound fetch) | 7.18MB | 1.97MB |
+  | + `internal/app.BuildSender` 全体 (FCM/APNs の JWT 署名 = `crypto/rsa`/`ecdsa`/`x509`/`pem`) = `cmd/worker` | 7.95MB | 2.15MB |
+
+  ここに至るまでの主な削減:
+  - **`(*http.Client).Do` を wasm ビルドで呼ばない** (`internal/push`
+    の `HTTPDoer` インターフェース + `httpclient_js.go`): 一番効いた変更で
+    **gzip で約 1.1MB (raw で約 4.8MB)**。`(*http.Client).Do` は
+    `Transport` が nil のとき `http.DefaultTransport` にフォールバックする
+    コードを含むため、`Transport` を常に設定していても Go のリンカは
+    `*http.Transport` ごと `crypto/tls` / `crypto/x509` / ルート CA 処理 /
+    各暗号スイートを残してしまう (Workers では TLS は fetch 側が行うので
+    一切実行されないコード)。wasm ビルドでは `cloudflare/fetch` の
+    `http.RoundTripper` を直接呼ぶ `fetchDoer` を使い、これを丸ごと
+    落とした。**`cmd/worker` から到達するコードで `(*http.Client).Do` /
+    `Get` / `Post` を呼ぶと即この分が戻ってくる**ので注意。
+  - `worker/build.sh` の `GOEXPERIMENT=nojsonv2`: Go 1.26+ がデフォルトで
+    リンクする `encoding/json/v2` / `encoding/json/jsontext` の実装を
+    使わないよう明示的に外す (`encoding/json` パッケージ自体の挙動は変わらない
+    — 常に classic 版の実装になる。このバックエンドは `encoding/json/v2` を
+    どこでも import していない)。**gzip で約 220KB** の削減。
+  - ent / atlas / kin-openapi を `cmd/worker` からリンクしない構成
+    (`internal/core` + `sqlstore`、`openapivalidate` は cmd/server 専用)。
+
+  効果が無く不採用にしたもの: `wasm-opt -Oz` (binaryen。誤差程度)、
+  `GOWASM=satconv,signext` (約 1KB)。oapi-codegen の生成サーバー
+  (`github.com/oapi-codegen/runtime` 込み) は手書きルーティングと比べて
+  gzip で約 45KB の差しかなく、生成コードのまま維持している。
+
+  (`internal/push` 自体は Go 標準ライブラリ + wasm ビルド時の
+  `github.com/syumai/workers-go/cloudflare/fetch` だけに依存する作りで、
+  APNs/FCM 用ライブラリ [`github.com/sideshow/apns2` /
+  `golang.org/x/oauth2` など] は使っていない — 下の「push.Sender と fetch」
+  参照。JWT 署名は自前実装)。
 
 ### 環境変数のマッピング
 
@@ -445,8 +547,8 @@ wasm に転送する JS グルー) と `wasm_exec.js` を生成し、続けて
 | `ADDR` / `SHUTDOWN_TIMEOUT` | コピーされない (Workers はリスンしない。`net/http.Server` を使わない) |
 | `DB_DIALECT` / `DB_DSN` / `DB_AUTO_MIGRATE` | コピーされない (D1 を `[[d1_databases]]` binding 経由で直接開く。スキーマは `wrangler d1 migrations` で管理) |
 
-APNs は wasm ビルドでは `apns2` の HTTP/2 直結トランスポートの代わりに
-`github.com/syumai/workers-go/cloudflare/fetch` 経由の `*http.Client` を使う
+APNs は wasm ビルドでは net/http の素のトランスポートの代わりに
+`github.com/syumai/workers-go/cloudflare/fetch` 経由の `HTTPDoer` を使う
 (`internal/push/httpclient_js.go`)。Expo/FCM も同様 — 詳細は次項。
 
 ### push.Sender と fetch (重要な実装上の注意)
@@ -461,22 +563,32 @@ Go 標準の `net/http/roundtrip_js.go` は `fetch(url, options)` の 2 引数�
 再現・確認した)。`github.com/syumai/workers-go/cloudflare/fetch`
 (このライブラリ自身の D1/KV/R2 バインディングが内部で使っているのと同じ
 パッケージ) は `Request` オブジェクトを組み立てて `fetch(request, init)`
-の形で呼ぶため、これは workerd が受け付ける。そこで
-`internal/push/httpclient_js.go` (`//go:build js && wasm`。`_default.go`
-側は非 wasm では nil を返す no-op) が `wasmTransport()` として
-`cloudflare/fetch` ベースの `http.RoundTripper` を提供し、
+の形で呼ぶため、これは workerd が受け付ける。そこで各 Sender の HTTP
+クライアントは `*http.Client` ではなく `push.HTTPDoer` インターフェース
+(`Do(*http.Request)` だけ。`*http.Client` もこれを満たすのでテストは
+`httptest.Server.Client()` をそのまま注入できる) にし、省略時の実装を
+`newHTTPClient` でビルドタグ切り替えする: 非 wasm
+(`httpclient_default.go`) は今まで通りの `&http.Client{Timeout: 10s}`、
+wasm (`httpclient_js.go`, `//go:build js && wasm`) は `cloudflare/fetch` の
+`http.RoundTripper` を直接呼ぶ `fetchDoer` (タイムアウトは request の
+context で best effort)。`*http.Client` を経由しないのはサイズのため
+でもある (上記「サイズ」: `(*http.Client).Do` を 1 箇所でも呼ぶと
+`crypto/tls` 一式が wasm に残り gzip で約 1.1MB 増える)。これを
 
 - `push.ExpoSender.sendBatch` (`expo.go`)
 - `push.FCMSender.sendOne` (`fcm.go`。送信自体だけでなく、
-  `NewFCMSender` が作る OAuth2 トークン取得の HTTP 呼び出しにも
-  `oauth2.HTTPClient` context 経由で同じ fix を適用している — ここを
-  見落とすとトークン取得自体が同じエラーで失敗する)
-- `push.APNSSender` (`apns.go`。`apns2.NewTokenClient` の
-  `http2.Transport` を差し替え)
+  `NewFCMSender` が作るアクセストークン取得 (自前の JWT bearer 交換。
+  下記「プッシュ通知プロバイダ」参照) の HTTP 呼び出しにも同じ
+  `newHTTPClient` を使っている — ここを見落とすとトークン取得自体が
+  同じエラーで失敗する)
+- `push.APNSSender` (`apns.go`。`NewAPNSSender` が `HTTPClient` に
+  `newHTTPClient` の結果を設定。net/http の `*http.Transport` は https に
+  対して自動で HTTP/2 をネゴシエートするので、非 wasm ビルドでは
+  `golang.org/x/net/http2` 等を別途使う必要はない)
 
-の 3 箇所すべてで使っている。`internal/push` の公開 API・cmd/server 側の
-挙動は変わらない (`wasmTransport()` は非 wasm ビルドでは常に `nil` を返し、
-各 Sender は今まで通り `http.DefaultTransport` を使う)。
+の 3 箇所すべてで使っている。cmd/server 側の挙動は変わらない
+(非 wasm ビルドの `newHTTPClient` は今まで通り `http.DefaultTransport` を
+使う `*http.Client` を返す)。
 
 ### セットアップ
 
@@ -529,10 +641,9 @@ mise run worker:dev               # npx wrangler dev --port 8787
 
 `mise run worker:build` は `../cmd/worker` を Go の通常ツールチェーンで
 wasm ビルドする ([TinyGo ではない](https://github.com/syumai/workers-go) —
-`workers-assets-gen -mode=go` を使う)。ent / kin-openapi / apns2 /
-golang.org/x/oauth2 などの依存を含むため `app.wasm` は約 37MB (raw) /
-約 8.2MB (gzip) になる (ビルドのたびにサイズを表示する) — 上記「サイズ上限」
-参照。
+`workers-assets-gen -mode=go` を使う)。ent / atlas / kin-openapi を
+リンクしないため `app.wasm` は約 7.98MB (raw) / 約 2.15MB (gzip -9) になる
+(ビルドのたびにサイズを表示する) — 上記「サイズ」参照。
 
 ### D1 migration (`backend/worker/migrations/`)
 
@@ -560,7 +671,10 @@ D1 は `wrangler d1 migrations` で管理する専用の migration 形式
 
 ### ローカルでの動作確認 (実施内容)
 
-この実装は `wrangler dev` (workerd) に対して実際に一通り確認済み:
+ent/atlas/kin-openapi を切り離して `internal/store/sqlstore` (素の
+`database/sql`) に置き換えた後も、`wrangler dev` (workerd + ローカル D1)
+に対して同じシナリオを再確認済み (`internal/store/sqlstore` が実際に D1
+上で動くことの確認が目的):
 
 - `GET /healthz` → `200 {"status":"ok"}`
 - `POST /v1/devices` (`loginId`+`installationId`+`pushToken`) → `200`、
@@ -580,6 +694,11 @@ D1 は `wrangler d1 migrations` で管理する専用の migration 形式
   Expo push token"`) が返ることを確認 (= ワーカーから外部への outbound
   fetch 自体は正常に届いている。トランスポート層のエラーではないことの
   確認が目的)。
+  `internal/push` を `HTTPDoer` + `fetchDoer` (上記「push.Sender と
+  fetch」) に変えた後も同じシナリオを再実行し、同じ応答を確認済み。
+- 生成サーバー (`api.gen.go`) 経由の入力エラー: `installationId` に数値を
+  入れた `POST /v1/devices` → `400 {"code":"invalid_request", ...}`、
+  未知のパス → `404`。
 
 未検証: FCM (`PUSH_PROVIDER=native`) の実サービスアカウントを使った送信、
 APNs の実鍵を使った送信 (どちらも認証情報が必要なため)。ただし FCM の

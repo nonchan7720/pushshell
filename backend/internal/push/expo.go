@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"time"
 )
 
 // DefaultExpoEndpoint は Expo Push API のエンドポイント。
@@ -22,8 +21,8 @@ type ExpoSender struct {
 	Endpoint string
 	// AccessToken は Expo のアクセストークン (任意。設定すると Bearer で送る)。
 	AccessToken string
-	// HTTPClient は省略時 10 秒タイムアウトのクライアント。
-	HTTPClient *http.Client
+	// HTTPClient は省略時 10 秒タイムアウトのクライアント (newHTTPClient)。
+	HTTPClient HTTPDoer
 }
 
 type expoMessage struct {
@@ -122,10 +121,7 @@ func (s *ExpoSender) sendBatch(ctx context.Context, messages []Message) ([]Resul
 
 	client := s.HTTPClient
 	if client == nil {
-		// wasmTransport is non-nil only in a js/wasm build (cmd/worker); see
-		// httpclient_js.go for why plain net/http doesn't reach Expo from
-		// inside Cloudflare Workers on its own.
-		client = &http.Client{Transport: wasmTransport(), Timeout: 10 * time.Second}
+		client = newHTTPClient(defaultHTTPTimeout)
 	}
 	resp, err := client.Do(req)
 	if err != nil {

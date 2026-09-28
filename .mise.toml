@@ -46,11 +46,18 @@ run = [
 # OpenAPI code generation
 # ---------------------------------------------------------------------------
 [tasks."gen:openapi:go"]
-description = "openapi/openapi.yaml から Go サーバー/クライアントを生成"
+description = "openapi/openapi.yaml から Go サーバー/クライアント/バリデータ用スペックを生成"
 dir = "backend"
 run = "go generate ./internal/api/..."
-sources = ["../openapi/openapi.yaml", "internal/api/oapi-codegen.yaml"]
-outputs = ["internal/api/api.gen.go"]
+sources = [
+  "../openapi/openapi.yaml",
+  "internal/api/oapi-codegen.yaml",
+  "internal/transport/httpapi/openapivalidate/oapi-codegen-spec.yaml",
+]
+outputs = [
+  "internal/api/api.gen.go",
+  "internal/transport/httpapi/openapivalidate/spec.gen.go",
+]
 
 [tasks."gen:openapi:ts"]
 description = "openapi/openapi.yaml から TypeScript 型を生成"

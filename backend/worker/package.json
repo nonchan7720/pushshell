@@ -11,6 +11,7 @@
     "migrate:remote": "npx wrangler d1 migrations apply webapp-notification --remote"
   },
   "devDependencies": {
+    "binaryen": "^132.0.0",
     "wrangler": "^4.143.0"
   }
 }

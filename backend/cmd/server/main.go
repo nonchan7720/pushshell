@@ -16,9 +16,11 @@ import (
 
 	"github.com/nonchan7720/webapp-notification/backend/internal/app"
 	"github.com/nonchan7720/webapp-notification/backend/internal/config"
+	"github.com/nonchan7720/webapp-notification/backend/internal/core"
 	"github.com/nonchan7720/webapp-notification/backend/internal/db"
-	"github.com/nonchan7720/webapp-notification/backend/internal/handler"
-	"github.com/nonchan7720/webapp-notification/backend/internal/server"
+	"github.com/nonchan7720/webapp-notification/backend/internal/store/entstore"
+	"github.com/nonchan7720/webapp-notification/backend/internal/transport/httpapi"
+	"github.com/nonchan7720/webapp-notification/backend/internal/transport/httpapi/openapivalidate"
 )
 
 func main() {
@@ -61,8 +63,12 @@ func run() error {
 		return err
 	}
 
-	h := handler.New(client, sender, handler.AllowAll{}, logger)
-	mux, err := server.New(server.Options{Handler: h, APIKey: cfg.APIKey, Logger: logger})
+	svc := core.New(entstore.New(client), sender, core.AllowAll{}, logger)
+	validator, err := openapivalidate.Middleware(cfg.APIKey)
+	if err != nil {
+		return err
+	}
+	mux, err := httpapi.New(httpapi.Options{Service: svc, APIKey: cfg.APIKey, Logger: logger, Validator: validator})
 	if err != nil {
 		return err
 	}

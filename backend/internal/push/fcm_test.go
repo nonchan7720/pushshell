@@ -2,13 +2,20 @@ package push
 
 import (
 	"context"
+	"crypto"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/sha256"
+	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
+	"encoding/pem"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync/atomic"
 	"testing"
-	"time"
-
-	"golang.org/x/oauth2"
 )
 
 // fakeTokenSource returns a fixed access token without any network call.
@@ -17,11 +24,11 @@ type fakeTokenSource struct {
 	err         error
 }
 
-func (f fakeTokenSource) Token() (*oauth2.Token, error) {
+func (f fakeTokenSource) Token(context.Context) (string, error) {
 	if f.err != nil {
-		return nil, f.err
+		return "", f.err
 	}
-	return &oauth2.Token{AccessToken: f.accessToken, Expiry: time.Now().Add(time.Hour)}, nil
+	return f.accessToken, nil
 }
 
 func TestFCMSender_Send_OK(t *testing.T) {
@@ -189,5 +196,169 @@ func TestFCMSender_Send_PreservesOrder(t *testing.T) {
 		if !r.OK {
 			t.Fatalf("index %d: expected ok, got %+v", i, r)
 		}
+	}
+}
+
+// --- NewFCMSender / token exchange / JWT signing ---
+
+// newTestServiceAccountJSON builds a Firebase-service-account-shaped JSON
+// document, with its private_key PEM (PKCS#8) wrapping key, pointing
+// token_uri at tokenURI.
+func newTestServiceAccountJSON(t *testing.T, key *rsa.PrivateKey, tokenURI string) []byte {
+	t.Helper()
+	der, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})
+	sa := fcmServiceAccount{
+		ClientEmail: "test@example-project.iam.gserviceaccount.com",
+		PrivateKey:  string(pemBytes),
+		TokenURI:    tokenURI,
+		ProjectID:   "example-project",
+	}
+	b, err := json.Marshal(sa)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}
+
+// verifyRS256JWT parses a two-dot JWT and verifies its RS256 signature
+// against pub, returning the decoded claims.
+func verifyRS256JWT(t *testing.T, jwt string, pub *rsa.PublicKey) map[string]any {
+	t.Helper()
+	parts := strings.Split(jwt, ".")
+	if len(parts) != 3 {
+		t.Fatalf("malformed JWT (want 3 segments): %q", jwt)
+	}
+	signingInput := parts[0] + "." + parts[1]
+	sig, err := base64.RawURLEncoding.DecodeString(parts[2])
+	if err != nil {
+		t.Fatalf("decode signature: %v", err)
+	}
+	sum := sha256.Sum256([]byte(signingInput))
+	if err := rsa.VerifyPKCS1v15(pub, crypto.SHA256, sum[:], sig); err != nil {
+		t.Fatalf("RS256 signature verification failed: %v", err)
+	}
+	claimsRaw, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		t.Fatalf("decode claims: %v", err)
+	}
+	var claims map[string]any
+	if err := json.Unmarshal(claimsRaw, &claims); err != nil {
+		t.Fatalf("unmarshal claims: %v", err)
+	}
+	return claims
+}
+
+func TestNewFCMSender_TokenExchangeAndCaching(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var tokenCalls int32
+	mux := http.NewServeMux()
+	var sendCalls int32
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	mux.HandleFunc("/token", func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&tokenCalls, 1)
+		if err := r.ParseForm(); err != nil {
+			t.Errorf("parse form: %v", err)
+		}
+		if got := r.FormValue("grant_type"); got != fcmGrantType {
+			t.Errorf("unexpected grant_type: %q", got)
+		}
+		assertion := r.FormValue("assertion")
+		claims := verifyRS256JWT(t, assertion, &key.PublicKey)
+		if claims["iss"] != "test@example-project.iam.gserviceaccount.com" {
+			t.Errorf("unexpected iss: %v", claims["iss"])
+		}
+		if claims["scope"] != fcmScope {
+			t.Errorf("unexpected scope: %v", claims["scope"])
+		}
+		if claims["aud"] != srv.URL+"/token" {
+			t.Errorf("unexpected aud: %v", claims["aud"])
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `{"access_token":"tok-%d","expires_in":3600,"token_type":"Bearer"}`, atomic.LoadInt32(&tokenCalls))
+	})
+	mux.HandleFunc("/send", func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&sendCalls, 1)
+		if got := r.Header.Get("Authorization"); got != "Bearer tok-1" {
+			t.Errorf("unexpected Authorization (want cached token): %q", got)
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{}`))
+	})
+
+	saJSON := newTestServiceAccountJSON(t, key, srv.URL+"/token")
+	sender, err := NewFCMSender(saJSON, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sender.ProjectID != "example-project" {
+		t.Fatalf("unexpected ProjectID: %q", sender.ProjectID)
+	}
+	sender.Endpoint = srv.URL + "/send"
+
+	for i := range 2 {
+		res, err := sender.Send(context.Background(), []Message{{DeviceToken: fmt.Sprintf("dev-%d", i)}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !res[0].OK {
+			t.Fatalf("send %d: unexpected result: %+v", i, res[0])
+		}
+	}
+	if got := atomic.LoadInt32(&tokenCalls); got != 1 {
+		t.Fatalf("expected exactly 1 token exchange (token should be cached/reused), got %d", got)
+	}
+	if got := atomic.LoadInt32(&sendCalls); got != 2 {
+		t.Fatalf("expected 2 send calls, got %d", got)
+	}
+}
+
+func TestNewFCMSender_ExplicitProjectIDOverridesJSON(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saJSON := newTestServiceAccountJSON(t, key, "https://example.invalid/token")
+	sender, err := NewFCMSender(saJSON, "explicit-project")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sender.ProjectID != "explicit-project" {
+		t.Fatalf("unexpected ProjectID: %q", sender.ProjectID)
+	}
+}
+
+func TestNewFCMSender_MissingProjectID(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	der, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sa := fcmServiceAccount{
+		ClientEmail: "test@example.iam.gserviceaccount.com",
+		PrivateKey:  string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})),
+		TokenURI:    "https://example.invalid/token",
+	}
+	b, _ := json.Marshal(sa)
+	if _, err := NewFCMSender(b, ""); err == nil {
+		t.Fatal("expected error for missing project id")
+	}
+}
+
+func TestNewFCMSender_InvalidJSON(t *testing.T) {
+	if _, err := NewFCMSender([]byte("not json"), "p"); err == nil {
+		t.Fatal("expected error for invalid JSON")
 	}
 }

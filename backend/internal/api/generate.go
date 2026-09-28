@@ -4,3 +4,4 @@
 package api
 
 //go:generate go tool oapi-codegen -config oapi-codegen.yaml ../../../openapi/openapi.yaml
+//go:generate go tool oapi-codegen -config ../transport/httpapi/openapivalidate/oapi-codegen-spec.yaml ../../../openapi/openapi.yaml

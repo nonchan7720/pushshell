@@ -1,0 +1,22 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/oapi-codegen/oapi-codegen/HEAD/configuration-schema.json
+#
+# Generates only the embedded OpenAPI spec (GetSpec()/GetSwagger()) into
+# package openapivalidate — no models/server/client, so this package's only
+# codegen'd dependency is kin-openapi (which it already needs for the
+# request validator itself; see openapivalidate.go). internal/api's own
+# oapi-codegen.yaml has embedded-spec: false so api.gen.go (used by
+# cmd/worker too) does not pull in kin-openapi.
+#
+# Invoked from internal/api/generate.go (so `go generate ./internal/api/...`
+# regenerates this too); paths below are relative to internal/api, the
+# go:generate directive's working directory.
+package: openapivalidate
+output: ../transport/httpapi/openapivalidate/spec.gen.go
+generate:
+  models: false
+  std-http-server: false
+  strict-server: false
+  client: false
+  embedded-spec: true
+output-options:
+  skip-prune: false
