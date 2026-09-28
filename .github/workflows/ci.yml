@@ -29,12 +29,13 @@ jobs:
           path: ~/go/pkg/mod
           key: gomod-${{ runner.os }}-${{ hashFiles('backend/go.sum') }}
           restore-keys: gomod-${{ runner.os }}-
-      - name: Download modules
-        run: cd backend && go mod download
-      - name: Generated code is up to date
+      - name: Generated code and go.mod/go.sum are up to date
+        # go mod download は tool 依存の go.sum エントリを追記して差分を生むので使わない。
+        # 生成 → tidy の結果がコミット済みの状態と一致することを確認する。
         run: |
           mise run gen:ent
           mise run gen:openapi:go
+          (cd backend && go mod tidy)
           git diff --exit-code -- backend
       - run: mise run backend:vet
       - run: mise run backend:lint
