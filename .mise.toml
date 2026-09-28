@@ -1,0 +1,176 @@
+# mise (https://mise.jdx.dev) — 開発環境の唯一の入口
+# `mise install` で全ツールを揃え、`mise run <task>` で各操作を実行する。
+
+[tools]
+# ent / oapi-codegen の CLI は go.mod のバージョンで `go run -mod=mod` される (gen タスク参照)
+node = "lts"
+go = "1.27"
+atlas = "1.3.0"
+golangci-lint = "2.14.0"
+# Android ネイティブビルドを行う場合のみ必要 (EAS Build を使うなら不要)
+# java = "temurin-17"
+
+[env]
+_.file = [".env", ".env.local"]
+GOFLAGS = "-mod=mod"
+
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
+[tasks.setup]
+description = "全依存をインストール (Go modules + npm)"
+run = [
+  "cd backend && go mod download",
+  "cd app && npm install",
+]
+
+# ---------------------------------------------------------------------------
+# OpenAPI code generation
+# ---------------------------------------------------------------------------
+[tasks."gen:openapi:go"]
+description = "openapi/openapi.yaml から Go サーバー/クライアントを生成"
+dir = "backend"
+run = "go generate ./internal/api/..."
+sources = ["../openapi/openapi.yaml", "internal/api/oapi-codegen.yaml"]
+outputs = ["internal/api/api.gen.go"]
+
+[tasks."gen:openapi:ts"]
+description = "openapi/openapi.yaml から TypeScript 型を生成"
+dir = "app"
+run = "npx openapi-typescript ../openapi/openapi.yaml -o src/api/schema.d.ts"
+sources = ["../openapi/openapi.yaml"]
+outputs = ["src/api/schema.d.ts"]
+
+[tasks."gen:ent"]
+description = "ent スキーマからコードを生成"
+dir = "backend"
+run = "go generate ./internal/ent/..."
+sources = ["internal/ent/schema/*.go", "internal/ent/generate.go"]
+outputs = ["internal/ent/client.go"]
+
+[tasks.gen]
+description = "全コード生成 (ent + OpenAPI Go/TS)"
+depends = ["gen:ent", "gen:openapi:go", "gen:openapi:ts"]
+
+# ---------------------------------------------------------------------------
+# Backend (Go)
+# ---------------------------------------------------------------------------
+[tasks."backend:run"]
+description = "バックエンドサーバーを起動"
+dir = "backend"
+run = "go run ./cmd/server"
+
+[tasks."backend:build"]
+description = "バックエンドをビルド"
+dir = "backend"
+run = "go build -o bin/server ./cmd/server"
+
+[tasks."backend:test"]
+description = "バックエンドのテスト"
+dir = "backend"
+run = "go test ./..."
+
+[tasks."backend:lint"]
+description = "golangci-lint"
+dir = "backend"
+run = "golangci-lint run ./..."
+
+[tasks."backend:vet"]
+dir = "backend"
+run = ["gofmt -l . | (! grep .)", "go vet ./..."]
+
+# ---------------------------------------------------------------------------
+# Database (ent + Atlas)
+#   DB_DIALECT: sqlite | mysql | postgres
+# ---------------------------------------------------------------------------
+[tasks."db:diff"]
+description = "ent スキーマ差分から migration を生成 (go run ./cmd/migrate): mise run db:diff <name> --dialect <dialect>"
+dir = "backend"
+usage = '''
+arg "name" help="migration 名"
+flag "--dialect <dialect>" help="sqlite | mysql | postgres (default: sqlite)" default="sqlite"
+'''
+run = "go run ./cmd/migrate diff {{arg(name='name')}} --dialect {{flag(name='dialect')}}"
+
+[tasks."db:diff:all"]
+description = "全 dialect の migration を生成 (mysql/postgres の dev DB には Docker が必要)"
+dir = "backend"
+usage = 'arg "name" help="migration 名"'
+run = [
+  "go run ./cmd/migrate diff {{arg(name='name')}} --dialect sqlite",
+  "go run ./cmd/migrate diff {{arg(name='name')}} --dialect mysql",
+  "go run ./cmd/migrate diff {{arg(name='name')}} --dialect postgres",
+]
+
+[tasks."db:apply"]
+description = "migration を適用 (DB_DIALECT / ATLAS_URL を使用)"
+dir = "backend"
+run = "atlas migrate apply --env ${DB_DIALECT:-sqlite} --url \"${ATLAS_URL:-sqlite://data/app.db}\""
+
+[tasks."db:status"]
+description = "migration 適用状況"
+dir = "backend"
+run = "atlas migrate status --env ${DB_DIALECT:-sqlite} --url \"${ATLAS_URL:-sqlite://data/app.db}\""
+
+[tasks."db:validate"]
+description = "migration ディレクトリの整合性検証 (atlas.sum の再計算・比較。Atlas Pro 不要)"
+dir = "backend"
+run = [
+  "atlas migrate validate --dir file://migrations/sqlite",
+  "atlas migrate validate --dir file://migrations/mysql",
+  "atlas migrate validate --dir file://migrations/postgres",
+]
+
+[tasks."db:lint"]
+description = "migration の意味検証 (dev DB へ実際に適用して解析)。Atlas v0.38+ では Atlas Pro ログインが必要 (任意)"
+dir = "backend"
+run = "atlas migrate lint --env ${DB_DIALECT:-sqlite} --latest 1"
+
+[tasks."db:hash"]
+description = "atlas.sum を再計算"
+dir = "backend"
+run = [
+  "atlas migrate hash --dir file://migrations/sqlite",
+  "atlas migrate hash --dir file://migrations/mysql",
+  "atlas migrate hash --dir file://migrations/postgres",
+]
+
+# ---------------------------------------------------------------------------
+# App (React Native / Expo)
+# ---------------------------------------------------------------------------
+[tasks."app:start"]
+description = "Metro dev server を起動"
+dir = "app"
+run = "npx expo start"
+
+[tasks."app:typecheck"]
+dir = "app"
+run = "npx tsc --noEmit"
+
+[tasks."app:prebuild"]
+description = "app.config.ts の設定でネイティブプロジェクト生成 (ios/, android/)"
+dir = "app"
+run = "npx expo prebuild --clean"
+
+[tasks."app:run:android"]
+dir = "app"
+run = "npx expo run:android"
+
+[tasks."app:run:ios"]
+dir = "app"
+run = "npx expo run:ios"
+
+[tasks."app:build:android"]
+description = "EAS Build (Android, production)"
+dir = "app"
+run = "npx eas build --platform android --profile production"
+
+[tasks."app:build:ios"]
+description = "EAS Build (iOS, production)"
+dir = "app"
+run = "npx eas build --platform ios --profile production"
+
+# ---------------------------------------------------------------------------
+[tasks.check]
+description = "lint + typecheck + test をまとめて実行"
+depends = ["backend:vet", "backend:test", "app:typecheck"]

@@ -1,0 +1,75 @@
+name: CI
+
+# 各 action はサプライチェーン対策としてコミット SHA で固定する (コメントがタグ名)。
+# 更新: git ls-remote --tags https://github.com/<owner>/<repo>.git
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: backend (go)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          install: true
+          cache: true
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Go modules cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/go/pkg/mod
+          key: gomod-${{ runner.os }}-${{ hashFiles('backend/go.sum') }}
+          restore-keys: gomod-${{ runner.os }}-
+      - name: Download modules
+        run: cd backend && go mod download
+      - name: Generated code is up to date
+        run: |
+          mise run gen:ent
+          mise run gen:openapi:go
+          git diff --exit-code -- backend
+      - run: mise run backend:vet
+      - run: mise run backend:lint
+      - run: mise run backend:test
+      - name: Build without CGO
+        run: cd backend && CGO_ENABLED=0 go build ./...
+      - name: Migration directories are consistent (atlas.sum)
+        run: mise run db:validate
+      - name: Migrations apply to a fresh sqlite database
+        run: mise run db:apply
+        env:
+          DB_DIALECT: sqlite
+          ATLAS_URL: sqlite://${{ runner.temp }}/ci.db
+
+  app:
+    name: app (expo)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          install: true
+          cache: true
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.npm
+          key: npm-${{ runner.os }}-${{ hashFiles('app/package-lock.json') }}
+          restore-keys: npm-${{ runner.os }}-
+      - name: Install
+        run: cd app && npm ci
+      - name: Generated API types are up to date
+        run: |
+          mise run gen:openapi:ts
+          git diff --exit-code -- app/src/api
+      - run: mise run app:typecheck
+      - name: Expo config resolves
+        run: cd app && npx expo config --type public > /dev/null

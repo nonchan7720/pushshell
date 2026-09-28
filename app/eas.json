@@ -1,0 +1,54 @@
+{
+  "cli": {
+    "version": ">= 16.0.0",
+    "appVersionSource": "remote"
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "env": {
+        "APP_NAME": "WebApp (Dev)",
+        "APP_SLUG": "webapp-notification",
+        "APP_SCHEME": "webappnotification",
+        "APP_VERSION": "1.0.0",
+        "IOS_BUNDLE_ID": "com.example.webappnotification.dev",
+        "ANDROID_PACKAGE": "com.example.webappnotification.dev",
+        "WEBAPP_URL": "https://example.com",
+        "API_BASE_URL": "http://localhost:8080",
+        "EAS_PROJECT_ID": ""
+      }
+    },
+    "preview": {
+      "distribution": "internal",
+      "env": {
+        "APP_NAME": "WebApp (Preview)",
+        "APP_SLUG": "webapp-notification",
+        "APP_SCHEME": "webappnotification",
+        "APP_VERSION": "1.0.0",
+        "IOS_BUNDLE_ID": "com.example.webappnotification.preview",
+        "ANDROID_PACKAGE": "com.example.webappnotification.preview",
+        "WEBAPP_URL": "https://staging.example.com",
+        "API_BASE_URL": "https://staging-api.example.com",
+        "EAS_PROJECT_ID": ""
+      }
+    },
+    "production": {
+      "autoIncrement": true,
+      "env": {
+        "APP_NAME": "WebApp",
+        "APP_SLUG": "webapp-notification",
+        "APP_SCHEME": "webappnotification",
+        "APP_VERSION": "1.0.0",
+        "IOS_BUNDLE_ID": "com.example.webappnotification",
+        "ANDROID_PACKAGE": "com.example.webappnotification",
+        "WEBAPP_URL": "https://example.com",
+        "API_BASE_URL": "https://api.example.com",
+        "EAS_PROJECT_ID": ""
+      }
+    }
+  },
+  "submit": {
+    "production": {}
+  }
+}
