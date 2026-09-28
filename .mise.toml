@@ -1,0 +1,319 @@
+# mise (https://mise.jdx.dev) — 開発環境の唯一の入口
+# `mise install` で全ツールを揃え、`mise run <task>` で各操作を実行する。
+
+[tools]
+# ent / oapi-codegen の CLI は go.mod のバージョンで `go run -mod=mod` される (gen タスク参照)
+node = "lts"
+go = "1.27"
+atlas = "1.3.0"
+golangci-lint = "2.14.0"
+# Android ネイティブビルド用 (React Native 0.86 / AGP 8.12 は JDK 17)。
+# Android SDK 本体は mise のプラグインでは管理できないので `mise run android:sdk` で入れる。
+java = "temurin-17"
+
+[env]
+_.file = [".env", ".env.local"]
+GOFLAGS = "-mod=mod"
+# Android SDK の置き場所 (mise run android:sdk でここにインストールされる)。
+# 以下はシェルの環境変数や .env で上書きできる (get_env の default が既定値)。
+ANDROID_HOME = "{{env.HOME}}/.android-sdk"
+ANDROID_SDK_ROOT = "{{env.HOME}}/.android-sdk"
+ANDROID_PLATFORM = "{{ get_env(name='ANDROID_PLATFORM', default='android-36') }}"
+ANDROID_BUILD_TOOLS = "{{ get_env(name='ANDROID_BUILD_TOOLS', default='36.0.0') }}"
+ANDROID_NDK_VERSION = "{{ get_env(name='ANDROID_NDK_VERSION', default='27.1.12297006') }}"
+ANDROID_CMAKE_VERSION = "{{ get_env(name='ANDROID_CMAKE_VERSION', default='3.22.1') }}"
+ANDROID_AVD_NAME = "{{ get_env(name='ANDROID_AVD_NAME', default='pushshell') }}"
+# system image のタグ。google_apis (Play services あり、FCM の確認に必要) か
+# default (AOSP のみ。軽いので KVM が無い環境や WebView の確認向け)
+ANDROID_SYSTEM_IMAGE_TAG = "{{ get_env(name='ANDROID_SYSTEM_IMAGE_TAG', default='google_apis') }}"
+_.path = [
+  "{{env.HOME}}/.android-sdk/cmdline-tools/latest/bin",
+  "{{env.HOME}}/.android-sdk/platform-tools",
+  "{{env.HOME}}/.android-sdk/emulator",
+]
+
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
+[tasks.setup]
+description = "全依存をインストール (Go modules + npm)"
+run = [
+  "cd backend && go mod download",
+  "cd app && npm install",
+]
+
+# ---------------------------------------------------------------------------
+# OpenAPI code generation
+# ---------------------------------------------------------------------------
+[tasks."gen:openapi:go"]
+description = "openapi/openapi.yaml から Go サーバー/クライアント/バリデータ用スペックを生成"
+dir = "backend"
+run = "go generate ./internal/api/..."
+sources = [
+  "../openapi/openapi.yaml",
+  "internal/api/oapi-codegen.yaml",
+  "internal/transport/httpapi/openapivalidate/oapi-codegen-spec.yaml",
+]
+outputs = [
+  "internal/api/api.gen.go",
+  "internal/transport/httpapi/openapivalidate/spec.gen.go",
+]
+
+[tasks."gen:openapi:ts"]
+description = "openapi/openapi.yaml から TypeScript 型を生成"
+dir = "app"
+run = "npx openapi-typescript ../openapi/openapi.yaml -o src/api/schema.d.ts"
+sources = ["../openapi/openapi.yaml"]
+outputs = ["src/api/schema.d.ts"]
+
+[tasks."gen:ent"]
+description = "ent スキーマからコードを生成"
+dir = "backend"
+run = "go generate ./internal/ent/..."
+sources = ["internal/ent/schema/*.go", "internal/ent/generate.go"]
+outputs = ["internal/ent/client.go"]
+
+[tasks.gen]
+description = "全コード生成 (ent + OpenAPI Go/TS)"
+depends = ["gen:ent", "gen:openapi:go", "gen:openapi:ts"]
+
+# ---------------------------------------------------------------------------
+# Backend (Go)
+# ---------------------------------------------------------------------------
+[tasks."backend:run"]
+description = "バックエンドサーバーを起動"
+dir = "backend"
+run = "go run ./cmd/server"
+
+[tasks."backend:build"]
+description = "バックエンドをビルド"
+dir = "backend"
+run = "go build -o bin/server ./cmd/server"
+
+[tasks."backend:test"]
+description = "バックエンドのテスト"
+dir = "backend"
+run = "go test ./..."
+
+[tasks."backend:lint"]
+description = "golangci-lint"
+dir = "backend"
+run = "golangci-lint run ./..."
+
+[tasks."backend:vet"]
+dir = "backend"
+run = ["gofmt -l . | (! grep .)", "go vet ./..."]
+
+# ---------------------------------------------------------------------------
+# Cloudflare Workers + D1 (backend/cmd/worker, backend/worker/)
+#   詳細は backend/README.md「Cloudflare Workers + D1 で動かす」を参照。
+# ---------------------------------------------------------------------------
+[tasks."worker:install"]
+description = "backend/worker の npm 依存 (wrangler) をインストール"
+dir = "backend/worker"
+run = "npm install"
+
+[tasks."worker:migrations:sync"]
+description = "backend/migrations/sqlite/*.sql から backend/worker/migrations/NNNN_*.sql を再生成 (コミットする)"
+dir = "backend/worker"
+run = "./sync-migrations.sh"
+sources = ["../migrations/sqlite/*.sql"]
+outputs = ["migrations/*.sql"]
+
+[tasks."worker:build"]
+description = "cmd/worker を wasm にビルドし backend/worker/build/ に配置 (wrangler dev/deploy が読む)"
+dir = "backend/worker"
+run = "./build.sh"
+sources = ["../cmd/worker/*.go", "../internal/**/*.go", "../go.mod", "../go.sum"]
+outputs = ["build/worker.mjs", "build/app.wasm"]
+
+[tasks."worker:dev"]
+description = "wrangler dev (localhost:8787)。先に worker:install / worker:migrations:sync / worker:migrate:local / worker:build が必要"
+dir = "backend/worker"
+run = "npx wrangler dev --port 8787"
+
+[tasks."worker:smoke"]
+description = "ビルド済み worker (build/) を wrangler dev (workerd) + ローカル D1 で起動して API を叩くスモークテスト。SMOKE_EXPO=1 で Expo への実 fetch も検証"
+dir = "backend/worker"
+run = "./smoke.sh"
+
+[tasks."worker:migrate:local"]
+description = "D1 migration をローカル (wrangler dev / Miniflare) に適用"
+dir = "backend/worker"
+run = "npx wrangler d1 migrations apply pushshell --local"
+
+[tasks."worker:migrate:remote"]
+description = "D1 migration を本番の D1 データベースに適用 (要 wrangler login / database_id 設定)"
+dir = "backend/worker"
+run = "npx wrangler d1 migrations apply pushshell --remote"
+
+[tasks."worker:deploy"]
+description = "worker:build の後 wrangler deploy"
+dir = "backend/worker"
+depends = ["worker:build"]
+run = "npx wrangler deploy"
+
+# ---------------------------------------------------------------------------
+# Database (ent + Atlas)
+#   DB_DIALECT: sqlite | mysql | postgres
+# ---------------------------------------------------------------------------
+[tasks."db:diff"]
+description = "ent スキーマ差分から migration を生成 (go run ./cmd/migrate): mise run db:diff <name> --dialect <dialect>"
+dir = "backend"
+usage = '''
+arg "name" help="migration 名"
+flag "--dialect <dialect>" help="sqlite | mysql | postgres (default: sqlite)" default="sqlite"
+'''
+run = "go run ./cmd/migrate diff {{arg(name='name')}} --dialect {{flag(name='dialect')}}"
+
+[tasks."db:diff:all"]
+description = "全 dialect の migration を生成 (mysql/postgres の dev DB には Docker が必要)"
+dir = "backend"
+usage = 'arg "name" help="migration 名"'
+run = [
+  "go run ./cmd/migrate diff {{arg(name='name')}} --dialect sqlite",
+  "go run ./cmd/migrate diff {{arg(name='name')}} --dialect mysql",
+  "go run ./cmd/migrate diff {{arg(name='name')}} --dialect postgres",
+]
+
+[tasks."db:apply"]
+description = "migration を適用 (DB_DIALECT / ATLAS_URL を使用)"
+dir = "backend"
+run = "atlas migrate apply --env ${DB_DIALECT:-sqlite} --url \"${ATLAS_URL:-sqlite://data/app.db}\""
+
+[tasks."db:status"]
+description = "migration 適用状況"
+dir = "backend"
+run = "atlas migrate status --env ${DB_DIALECT:-sqlite} --url \"${ATLAS_URL:-sqlite://data/app.db}\""
+
+[tasks."db:validate"]
+description = "migration ディレクトリの整合性検証 (atlas.sum の再計算・比較。Atlas Pro 不要)"
+dir = "backend"
+run = [
+  "atlas migrate validate --dir file://migrations/sqlite",
+  "atlas migrate validate --dir file://migrations/mysql",
+  "atlas migrate validate --dir file://migrations/postgres",
+]
+
+[tasks."db:lint"]
+description = "migration の意味検証 (dev DB へ実際に適用して解析)。Atlas v0.38+ では Atlas Pro ログインが必要 (任意)"
+dir = "backend"
+run = "atlas migrate lint --env ${DB_DIALECT:-sqlite} --latest 1"
+
+[tasks."db:hash"]
+description = "atlas.sum を再計算"
+dir = "backend"
+run = [
+  "atlas migrate hash --dir file://migrations/sqlite",
+  "atlas migrate hash --dir file://migrations/mysql",
+  "atlas migrate hash --dir file://migrations/postgres",
+]
+
+# ---------------------------------------------------------------------------
+# App (React Native / Expo)
+# ---------------------------------------------------------------------------
+[tasks."app:start"]
+description = "Metro dev server を起動"
+dir = "app"
+run = "npx expo start"
+
+[tasks."app:typecheck"]
+dir = "app"
+run = "npx tsc --noEmit"
+
+[tasks."app:prebuild"]
+description = "app.config.ts の設定でネイティブプロジェクト生成 (ios/, android/)"
+dir = "app"
+run = "npx expo prebuild --clean"
+
+[tasks."app:run:android"]
+dir = "app"
+run = "npx expo run:android"
+
+[tasks."app:run:ios"]
+dir = "app"
+run = "npx expo run:ios"
+
+[tasks."app:build:android"]
+description = "EAS Build (Android, production)"
+dir = "app"
+run = "npx eas build --platform android --profile production"
+
+[tasks."app:build:ios"]
+description = "EAS Build (iOS, production)"
+dir = "app"
+run = "npx eas build --platform ios --profile production"
+
+# ---------------------------------------------------------------------------
+# Android SDK / emulator
+# ---------------------------------------------------------------------------
+[tasks."android:sdk"]
+description = "Android SDK (platform-tools, platform 36, build-tools, NDK, cmake) を $ANDROID_HOME にインストール"
+run = "bash scripts/android/install-sdk.sh"
+
+[tasks."android:emulator:install"]
+description = "エミュレータと system image (ANDROID_PLATFORM / ANDROID_SYSTEM_IMAGE_TAG, x86_64) をインストール"
+env = { ANDROID_EMULATOR = "1" }
+run = "bash scripts/android/install-sdk.sh"
+
+[tasks."android:avd:create"]
+description = "AVD を作成 (Pixel 7, ANDROID_PLATFORM / ANDROID_SYSTEM_IMAGE_TAG, x86_64)"
+depends = ["android:emulator:install"]
+run = '''
+echo no | avdmanager create avd --force --name "$ANDROID_AVD_NAME" \
+  --package "system-images;$ANDROID_PLATFORM;$ANDROID_SYSTEM_IMAGE_TAG;x86_64" --device pixel_7
+# 既定の userdata (12GB) は開発用には大きすぎるので縮小する (空きディスクが少ない環境向け)
+cfg="$HOME/.android/avd/$ANDROID_AVD_NAME.avd/config.ini"
+if [ -f "$cfg" ]; then
+  grep -q '^disk.dataPartition.size=' "$cfg" \
+    && sed -i 's/^disk.dataPartition.size=.*/disk.dataPartition.size=4G/' "$cfg" \
+    || echo 'disk.dataPartition.size=4G' >> "$cfg"
+fi
+'''
+
+[tasks."android:emulator"]
+description = "エミュレータを起動 (KVM が無ければ自動でソフトウェアエミュレーション。ANDROID_EMULATOR_EXTRA_ARGS で -cores/-memory 等を追加)"
+run = '''
+extra=""
+if [ "${ANDROID_EMULATOR_NO_ACCEL:-0}" = "1" ] || [ ! -e /dev/kvm ]; then
+  echo "KVM が使えないためソフトウェアエミュレーションで起動します (非常に遅い)"
+  extra="-no-accel -no-window -gpu swiftshader_indirect -no-audio -no-boot-anim"
+fi
+emulator -avd "$ANDROID_AVD_NAME" $extra ${ANDROID_EMULATOR_EXTRA_ARGS:-}
+'''
+
+[tasks."android:devices"]
+description = "接続中の端末 / エミュレータ一覧"
+run = "adb devices -l"
+
+[tasks."app:build:android:local"]
+description = "ローカルで Android debug APK をビルド (expo prebuild + gradlew assembleDebug)"
+dir = "app"
+run = [
+  "npx expo prebuild --platform android --no-install",
+  "cd android && ./gradlew assembleDebug",
+  "ls -la android/app/build/outputs/apk/debug/",
+]
+
+[tasks."android:smoke"]
+description = "接続中のエミュレータ/端末に debug APK を入れて起動し、スクリーンショットと logcat を保存 (scripts/android/emulator-smoke.sh)"
+run = "bash scripts/android/emulator-smoke.sh app/android/app/build/outputs/apk/debug/app-debug.apk ${SMOKE_OUT_DIR:-out/android-smoke}"
+
+[tasks."app:build:android:bundle"]
+description = "ローカルで Android release AAB (Google Play 提出用) をビルド (expo prebuild + gradlew bundleRelease)"
+dir = "app"
+run = [
+  "npx expo prebuild --platform android --no-install",
+  "cd android && ./gradlew bundleRelease",
+  "ls -la android/app/build/outputs/bundle/release/",
+]
+
+[tasks."app:install:android"]
+description = "ビルド済み debug APK を接続中の端末 / エミュレータにインストール"
+dir = "app"
+run = "adb install -r android/app/build/outputs/apk/debug/app-debug.apk"
+
+# ---------------------------------------------------------------------------
+[tasks.check]
+description = "lint + typecheck + test をまとめて実行"
+depends = ["backend:vet", "backend:test", "app:typecheck"]

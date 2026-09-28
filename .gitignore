@@ -141,3 +141,15 @@ dist
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
+
+# --- project ---
+backend/bin/
+backend/data/
+backend/*.db
+backend/*.db-*
+.env
+.env.local
+app/src/api/schema.d.ts.tmp
+
+# smoke test outputs
+out/

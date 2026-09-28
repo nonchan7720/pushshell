@@ -1,0 +1,25 @@
+name = "pushshell-api"
+main = "./build/worker.mjs"
+compatibility_date = "2026-09-01"
+
+# D1 (SQLite-compatible). `binding` must match d1Binding in
+# ../cmd/worker/main.go. Create the DB once with:
+#   npx wrangler d1 create pushshell
+# then paste the database_id it prints below.
+[[d1_databases]]
+binding = "DB"
+database_name = "pushshell"
+database_id = "<your-d1-database-id>"
+migrations_dir = "migrations"
+
+# Non-secret defaults. Override per-environment below, or with
+# `wrangler secret put <NAME>` for anything sensitive (API_KEY, FCM/APNs
+# credentials — see backend/README.md "Cloudflare Workers + D1 で動かす").
+[vars]
+PUSH_PROVIDER = "log"
+LOG_LEVEL = "info"
+
+# `./build.sh` (mise run worker:build) produces ./build/worker.mjs + app.wasm
+# before `wrangler dev`/`deploy` run; it is not wired up as wrangler's own
+# [build] hook so `mise run worker:build` stays the one place that triggers
+# a Go rebuild (see backend/README.md).

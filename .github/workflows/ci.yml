@@ -1,0 +1,125 @@
+name: CI
+
+# 各 action はサプライチェーン対策としてコミット SHA で固定する (コメントがタグ名)。
+# 更新: git ls-remote --tags https://github.com/<owner>/<repo>.git
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: backend (go)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          install: true
+          cache: true
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Go modules cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/go/pkg/mod
+          key: gomod-${{ runner.os }}-${{ hashFiles('backend/go.sum') }}
+          restore-keys: gomod-${{ runner.os }}-
+      - name: Generated code and go.mod/go.sum are up to date
+        # go mod download は tool 依存の go.sum エントリを追記して差分を生むので使わない。
+        # 生成 → tidy の結果がコミット済みの状態と一致することを確認する。
+        run: |
+          mise run gen:ent
+          mise run gen:openapi:go
+          (cd backend && go mod tidy)
+          git diff --exit-code -- backend
+      - run: mise run backend:vet
+      - run: mise run backend:lint
+      - run: mise run backend:test
+      - name: Build without CGO
+        run: cd backend && CGO_ENABLED=0 go build ./...
+      - name: Migration directories are consistent (atlas.sum)
+        run: mise run db:validate
+      - name: Migrations apply to a fresh sqlite database
+        run: mise run db:apply
+        env:
+          DB_DIALECT: sqlite
+          ATLAS_URL: sqlite://${{ runner.temp }}/ci.db
+
+  worker:
+    name: worker (cloudflare wasm)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          install: true
+          cache: true
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/go/pkg/mod
+          key: gomod-${{ runner.os }}-${{ hashFiles('backend/go.sum') }}
+          restore-keys: gomod-${{ runner.os }}-
+      - name: Vet worker build (js/wasm)
+        run: cd backend && GOOS=js GOARCH=wasm go vet ./cmd/worker/...
+      - name: Worker must not link ent / atlas / kin-openapi
+        run: |
+          cd backend
+          deps=$(GOOS=js GOARCH=wasm go list -deps ./cmd/worker | grep -E 'entgo.io|ariga.io|getkin/kin-openapi' || true)
+          if [ -n "$deps" ]; then echo "::error::worker links heavy deps:"; echo "$deps"; exit 1; fi
+      - name: Build worker wasm
+        run: mise run worker:install && mise run worker:build
+      - name: Smoke test the built worker (wrangler dev + local D1)
+        # Runs build/app.wasm on the real Workers runtime (workerd) against a
+        # fresh local D1: applies the D1 migrations, then drives every API
+        # operation with curl (backend/worker/smoke.sh). PUSH_PROVIDER=log, so
+        # no outbound network is needed.
+        run: mise run worker:smoke
+      - name: Upload wrangler log
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: worker-smoke-wrangler-log
+          path: backend/worker/.wrangler/smoke/wrangler.log
+          if-no-files-found: ignore
+      - name: "Size gate (Cloudflare Workers free plan, 3 MB gzip)"
+        run: |
+          raw=$(stat -c %s backend/worker/build/app.wasm)
+          gz=$(gzip -9 -c backend/worker/build/app.wasm | wc -c)
+          echo "app.wasm raw=$raw bytes, gzip=$gz bytes"
+          echo "### Worker wasm size" >> "$GITHUB_STEP_SUMMARY"
+          echo "- raw: $((raw / 1024)) KiB" >> "$GITHUB_STEP_SUMMARY"
+          echo "- gzip: $((gz / 1024)) KiB (limit 3072 KiB)" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$gz" -gt $((3 * 1024 * 1024)) ]; then
+            echo "::error::app.wasm gzip size $gz bytes exceeds the 3 MB free-plan limit"; exit 1
+          fi
+
+  app:
+    name: app (expo)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
+        with:
+          install: true
+          cache: true
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.npm
+          key: npm-${{ runner.os }}-${{ hashFiles('app/package-lock.json') }}
+          restore-keys: npm-${{ runner.os }}-
+      - name: Install
+        run: cd app && npm ci
+      - name: Generated API types are up to date
+        run: |
+          mise run gen:openapi:ts
+          git diff --exit-code -- app/src/api
+      - run: mise run app:typecheck
+      - name: Expo config resolves
+        run: cd app && npx expo config --type public > /dev/null

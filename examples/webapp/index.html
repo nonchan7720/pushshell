@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>WebApp Notification - bridge test page</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --fg: #1a1a1a;
+    --bg: #ffffff;
+    --border: #d9d9d9;
+    --accent: #2563eb;
+    --muted: #666666;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --fg: #f2f2f2;
+      --bg: #111214;
+      --border: #333333;
+      --accent: #60a5fa;
+      --muted: #999999;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 16px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    color: var(--fg);
+    background: var(--bg);
+    max-width: 640px;
+    margin-inline: auto;
+  }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  p.desc { color: var(--muted); font-size: 13px; margin: 0 0 16px; }
+  section {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 14px;
+    margin-bottom: 14px;
+  }
+  section h2 { font-size: 14px; margin: 0 0 10px; }
+  .status {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: #999; }
+  .dot.on { background: #22c55e; }
+  .dot.off { background: #ef4444; }
+  label { display: block; font-size: 12px; color: var(--muted); margin: 8px 0 4px; }
+  input[type="text"] {
+    width: 100%;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: transparent;
+    color: var(--fg);
+    font-size: 14px;
+  }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+  button {
+    appearance: none;
+    border: none;
+    border-radius: 8px;
+    padding: 9px 16px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    background: var(--accent);
+    color: white;
+  }
+  button.secondary {
+    background: transparent;
+    color: var(--fg);
+    border: 1px solid var(--border);
+  }
+  pre#log {
+    height: 220px;
+    overflow-y: auto;
+    background: color-mix(in srgb, var(--fg) 6%, var(--bg));
+    border-radius: 8px;
+    padding: 10px;
+    font-size: 12px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-all;
+    margin: 0;
+  }
+  .kv { font-size: 12px; color: var(--muted); }
+  .kv b { color: var(--fg); }
+</style>
+</head>
+<body>
+  <h1>WebApp Notification - bridge test page</h1>
+  <p class="desc">
+    app/src/bridge.ts の postMessage プロトコルを手動で確認するための、ビルド不要の静的ページです。
+    Expo アプリ (dev client) の WEBAPP_URL にこのページを配信して開いてください。
+  </p>
+
+  <section>
+    <h2>window.NativeApp</h2>
+    <div id="nativeAppStatus" class="status"><span class="dot off"></span><span>確認中...</span></div>
+    <p class="kv" id="nativeAppDetail"></p>
+    <p class="kv" id="loginIdsDetail"><b>loginIds:</b> (ready イベント未受信)</p>
+  </section>
+
+  <section>
+    <h2>ログイン (login メッセージを送信)</h2>
+    <label for="loginId">loginId</label>
+    <input type="text" id="loginId" placeholder="user-123" />
+    <label for="token">token (任意)</label>
+    <input type="text" id="token" placeholder="任意の bearer トークン" />
+    <div class="row">
+      <button id="loginBtn">login を送信</button>
+      <button class="secondary" id="logoutBtn">logout を送信 (上の loginId のみ)</button>
+      <button class="secondary" id="logoutAllBtn">logout を送信 (端末全体)</button>
+    </div>
+    <p class="kv">
+      「logout を送信 (上の loginId のみ)」は loginId 欄が空だと使えません
+      (その場合は端末全体ボタンを使ってください)。
+    </p>
+  </section>
+
+  <section>
+    <h2>その他のメッセージ</h2>
+    <div class="row">
+      <button class="secondary" id="getStateBtn">getState を送信</button>
+      <button class="secondary" id="openExternalBtn">openExternal を送信 (https://example.com)</button>
+    </div>
+  </section>
+
+  <section>
+    <h2>受信ログ (nativeapp CustomEvent)</h2>
+    <pre id="log">(まだイベントがありません)</pre>
+  </section>
+
+  <script>
+    const logEl = document.getElementById("log");
+    const lines = [];
+
+    function log(label, payload) {
+      const time = new Date().toLocaleTimeString();
+      lines.unshift(`[${time}] ${label} ${payload ? JSON.stringify(payload) : ""}`);
+      logEl.textContent = lines.slice(0, 200).join("\n");
+    }
+
+    function post(message) {
+      log("→ send", message);
+      if (window.ReactNativeWebView && typeof window.ReactNativeWebView.postMessage === "function") {
+        window.ReactNativeWebView.postMessage(JSON.stringify(message));
+      } else {
+        log("! error", { message: "window.ReactNativeWebView が見つかりません (ネイティブアプリの外で開いていませんか？)" });
+      }
+    }
+
+    // window.NativeApp の有無を表示する。
+    // injectedJavaScriptBeforeContentLoaded で注入されるので、ページ読み込み時点で既に入っているはず。
+    const statusEl = document.getElementById("nativeAppStatus");
+    const detailEl = document.getElementById("nativeAppDetail");
+    if (window.NativeApp && window.NativeApp.isNative) {
+      statusEl.innerHTML = '<span class="dot on"></span><span>ネイティブアプリ内で実行中</span>';
+      detailEl.innerHTML = `<b>platform:</b> ${window.NativeApp.platform} / <b>appVersion:</b> ${window.NativeApp.appVersion}`;
+    } else {
+      statusEl.innerHTML = '<span class="dot off"></span><span>通常のブラウザで実行中 (window.NativeApp なし)</span>';
+    }
+
+    // ネイティブ → Web イベントをすべてログに出す。ready イベントは loginIds も状態表示に反映する。
+    const loginIdsDetailEl = document.getElementById("loginIdsDetail");
+    window.addEventListener("nativeapp", (event) => {
+      log("← nativeapp", event.detail);
+      if (event.detail && event.detail.type === "ready") {
+        const loginIds = event.detail.loginIds || [];
+        loginIdsDetailEl.innerHTML = loginIds.length
+          ? `<b>loginIds:</b> ${loginIds.join(", ")}`
+          : "<b>loginIds:</b> (なし・未ログイン)";
+      }
+    });
+
+    document.getElementById("loginBtn").addEventListener("click", () => {
+      const loginId = document.getElementById("loginId").value.trim();
+      const token = document.getElementById("token").value.trim();
+      if (!loginId) {
+        log("! error", { message: "loginId を入力してください" });
+        return;
+      }
+      post({ type: "login", loginId, ...(token ? { token } : {}) });
+    });
+
+    document.getElementById("logoutBtn").addEventListener("click", () => {
+      const loginId = document.getElementById("loginId").value.trim();
+      if (!loginId) {
+        log("! error", { message: "loginId を入力してください (端末全体をログアウトするには右のボタンを使ってください)" });
+        return;
+      }
+      post({ type: "logout", loginId });
+    });
+
+    document.getElementById("logoutAllBtn").addEventListener("click", () => {
+      post({ type: "logout" });
+    });
+
+    document.getElementById("getStateBtn").addEventListener("click", () => {
+      post({ type: "getState" });
+    });
+
+    document.getElementById("openExternalBtn").addEventListener("click", () => {
+      post({ type: "openExternal", url: "https://example.com" });
+    });
+  </script>
+</body>
+</html>

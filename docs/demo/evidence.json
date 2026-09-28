@@ -1,0 +1,22 @@
+[
+  {
+    "title": "POST /v1/devices → 200",
+    "body": "{\n  \"appId\": \"com.example.pushshell\",\n  \"appVersion\": \"1.0.0\",\n  \"buildNumber\": \"1\",\n  \"createdAt\": \"2026-09-28T12:49:25.774787156Z\",\n  \"deviceModel\": \"Pixel 8\",\n  \"id\": 2,\n  \"installationId\": \"demo-installation-0001\",\n  \"locale\": \"ja-JP\",\n  \"loginId\": \"user-123\",\n  \"osVersion\": \"14\",\n  \"platform\": \"android\",\n  \"pushToken\": \"ExponentPushToken[demo-xxxxxxxxxxxxxxxxxxxx]\",\n  \"updatedAt\": \"2026-09-28T12:49:25.774787926Z\"\n}"
+  },
+  {
+    "title": "POST /v1/notifications (X-API-Key) → 200",
+    "body": "{\n  \"failed\": 0,\n  \"requested\": 1,\n  \"results\": [\n    {\n      \"installationId\": \"demo-installation-0001\",\n      \"loginId\": \"user-123\",\n      \"status\": \"ok\"\n    }\n  ],\n  \"sent\": 1\n}"
+  },
+  {
+    "title": "POST /v1/notifications (API キーなし) → 401",
+    "body": "{\"code\":\"unauthorized\",\"message\":\"unauthorized\"}"
+  },
+  {
+    "title": "DELETE /v1/devices/demo-installation-0001 → 204",
+    "body": ""
+  },
+  {
+    "title": "GET /v1/devices/demo-installation-0001 (logout 後) → 404",
+    "body": "{\"code\":\"not_found\",\"message\":\"device not found\"}"
+  }
+]

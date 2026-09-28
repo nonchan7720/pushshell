@@ -1,0 +1,54 @@
+{
+  "cli": {
+    "version": ">= 16.0.0",
+    "appVersionSource": "remote"
+  },
+  "build": {
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal",
+      "env": {
+        "APP_NAME": "WebApp (Dev)",
+        "APP_SLUG": "pushshell",
+        "APP_SCHEME": "pushshell",
+        "APP_VERSION": "1.0.0",
+        "IOS_BUNDLE_ID": "com.example.pushshell.dev",
+        "ANDROID_PACKAGE": "com.example.pushshell.dev",
+        "WEBAPP_URL": "https://example.com",
+        "API_BASE_URL": "http://localhost:8080",
+        "EAS_PROJECT_ID": ""
+      }
+    },
+    "preview": {
+      "distribution": "internal",
+      "env": {
+        "APP_NAME": "WebApp (Preview)",
+        "APP_SLUG": "pushshell",
+        "APP_SCHEME": "pushshell",
+        "APP_VERSION": "1.0.0",
+        "IOS_BUNDLE_ID": "com.example.pushshell.preview",
+        "ANDROID_PACKAGE": "com.example.pushshell.preview",
+        "WEBAPP_URL": "https://staging.example.com",
+        "API_BASE_URL": "https://staging-api.example.com",
+        "EAS_PROJECT_ID": ""
+      }
+    },
+    "production": {
+      "autoIncrement": true,
+      "env": {
+        "APP_NAME": "WebApp",
+        "APP_SLUG": "pushshell",
+        "APP_SCHEME": "pushshell",
+        "APP_VERSION": "1.0.0",
+        "IOS_BUNDLE_ID": "com.example.pushshell",
+        "ANDROID_PACKAGE": "com.example.pushshell",
+        "WEBAPP_URL": "https://example.com",
+        "API_BASE_URL": "https://api.example.com",
+        "EAS_PROJECT_ID": ""
+      }
+    }
+  },
+  "submit": {
+    "production": {}
+  }
+}

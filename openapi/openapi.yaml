@@ -1,0 +1,436 @@
+openapi: 3.0.3
+info:
+  title: WebApp Notification API
+  version: 1.0.0
+  description: |
+    WebView ラッパーアプリと通知バックエンドの間の契約。
+
+    - **アプリ → バックエンド**: Web アプリでログインしたときに、ログイン ID と
+      プッシュ通知用の端末情報を登録する (`POST /v1/devices`)。ログアウト時に解除する。
+    - **任意のサーバー → バックエンド**: ログイン ID を宛先にしてプッシュ通知を送る
+      (`POST /v1/notifications`)。API キーで保護される。
+
+    このファイルから Go サーバー (oapi-codegen) と TypeScript クライアント型
+    (openapi-typescript) の両方が生成される。
+servers:
+  - url: http://localhost:8080
+    description: ローカル開発
+
+tags:
+  - name: system
+  - name: devices
+    description: 端末登録 (アプリから呼ぶ)
+  - name: notifications
+    description: 通知送信 (サーバー間で呼ぶ)
+
+paths:
+  /healthz:
+    get:
+      tags: [system]
+      operationId: healthz
+      summary: ヘルスチェック
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+
+  /v1/devices:
+    post:
+      tags: [devices]
+      operationId: registerDevice
+      summary: 端末を登録 / 更新する
+      description: |
+        `installationId` をキーに端末を upsert し、`loginId` をその端末に紐付ける。
+        端末とログイン ID は多対多 (1 端末に複数アカウント、1 アカウントに複数端末)。
+        既に紐付いている場合は端末情報 (トークン等) だけ更新する。Web アプリのログイン時にアプリが呼び出す。
+      security:
+        - {}
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeviceRegistration"
+      responses:
+        "200":
+          description: 登録済みの端末
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Device"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/devices/{installationId}:
+    parameters:
+      - $ref: "#/components/parameters/InstallationId"
+    get:
+      tags: [devices]
+      operationId: getDevice
+      summary: 端末を取得する
+      security:
+        - apiKeyAuth: []
+      responses:
+        "200":
+          description: 端末
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Device"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      tags: [devices]
+      operationId: unregisterDevice
+      summary: 端末の登録を解除する (全ログイン ID の紐付けごと削除)
+      security:
+        - {}
+        - bearerAuth: []
+      responses:
+        "204":
+          description: 解除した (存在しなかった場合も 204)
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/devices/{installationId}/logins/{loginId}:
+    parameters:
+      - $ref: "#/components/parameters/InstallationId"
+      - name: loginId
+        in: path
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 256
+    delete:
+      tags: [devices]
+      operationId: unregisterDeviceLogin
+      summary: 端末から特定のログイン ID の紐付けだけを外す (そのユーザーのログアウト時)
+      description: |
+        端末自体とトークンは残るので、別のアカウントでログイン中ならそちらの通知は届き続ける。
+        アプリから呼ぶほか、Web アプリのバックエンドがセッション失効時に API キーで呼んでもよい
+        (installationId は bridge の `ready` イベントで Web アプリに渡る)。
+      security:
+        - {}
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        "204":
+          description: 解除した (存在しなかった場合も 204)
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/logins/{loginId}:
+    parameters:
+      - name: loginId
+        in: path
+        required: true
+        schema:
+          type: string
+          minLength: 1
+          maxLength: 256
+    delete:
+      tags: [devices]
+      operationId: unregisterLogin
+      summary: ログイン ID を全端末から外す (サーバー間)
+      description: |
+        Web アプリ側でセッションが失効・無効化された (全端末ログアウト、退会など) ときに
+        Web アプリのバックエンドから呼ぶ。以後そのログイン ID 宛の通知はどの端末にも届かない。
+        端末自体とトークンは残る (別アカウントの通知には影響しない)。
+      security:
+        - apiKeyAuth: []
+      responses:
+        "200":
+          description: 解除した端末数
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [removed]
+                properties:
+                  removed:
+                    type: integer
+                    description: 紐付けを外した端末数 (0 でも 200)
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /v1/notifications:
+    post:
+      tags: [notifications]
+      operationId: sendNotification
+      summary: ログイン ID 宛にプッシュ通知を送る
+      description: |
+        指定したログイン ID に紐づく全端末へ通知を送る。
+        `url` を指定するとアプリは通知タップ時にその URL を WebView で開く。
+      security:
+        - apiKeyAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SendNotificationRequest"
+      responses:
+        "200":
+          description: 送信結果
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SendNotificationResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+components:
+  securitySchemes:
+    apiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: サーバー間通信用 API キー (環境変数 `API_KEY`)
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: |
+        Web アプリがログイン時に postMessage で渡した任意のトークン。
+        バックエンド側の `Authorizer` 実装で検証する (デフォルトは検証なし)。
+
+  parameters:
+    InstallationId:
+      name: installationId
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+
+  responses:
+    BadRequest:
+      description: リクエスト不正
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Unauthorized:
+      description: 認証エラー
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotFound:
+      description: 見つからない
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+
+  schemas:
+    Health:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          example: ok
+
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          example: invalid_request
+        message:
+          type: string
+
+    Platform:
+      type: string
+      enum: [ios, android]
+
+    DeviceRegistration:
+      type: object
+      description: |
+        `pushToken` (Expo Push Token) と `deviceToken` (FCM / APNs のネイティブトークン) は
+        どちらか一方以上が必須。バックエンドの `PUSH_PROVIDER` が `expo` なら pushToken、
+        `native` なら deviceToken が送信に使われる。
+      required: [loginId, installationId, platform]
+      properties:
+        loginId:
+          type: string
+          description: Web アプリのログイン ID (postMessage で受け取ったもの)
+          minLength: 1
+          maxLength: 256
+        installationId:
+          type: string
+          description: アプリインストールごとに生成される安定した ID
+          minLength: 1
+          maxLength: 128
+        platform:
+          $ref: "#/components/schemas/Platform"
+        pushToken:
+          type: string
+          description: Expo Push Token (`ExponentPushToken[...]`)。`PUSH_PROVIDER=expo` で使う
+          minLength: 1
+          maxLength: 512
+        deviceToken:
+          type: string
+          description: ネイティブのデバイストークン (Android は FCM registration token、iOS は APNs device token の hex)。`PUSH_PROVIDER=native` で使う
+          minLength: 1
+          maxLength: 4096
+        appId:
+          type: string
+          description: バンドル ID / パッケージ名
+          maxLength: 256
+        appVersion:
+          type: string
+          maxLength: 64
+        buildNumber:
+          type: string
+          maxLength: 64
+        osVersion:
+          type: string
+          maxLength: 64
+        deviceModel:
+          type: string
+          maxLength: 128
+        locale:
+          type: string
+          maxLength: 32
+
+    DeviceInfo:
+      type: object
+      description: 端末情報 (ログイン ID を含まない DeviceRegistration)
+      required: [installationId, platform]
+      properties:
+        installationId:
+          type: string
+          minLength: 1
+          maxLength: 128
+        platform:
+          $ref: "#/components/schemas/Platform"
+        pushToken:
+          type: string
+          maxLength: 512
+        deviceToken:
+          type: string
+          maxLength: 4096
+        appId:
+          type: string
+          maxLength: 256
+        appVersion:
+          type: string
+          maxLength: 64
+        buildNumber:
+          type: string
+          maxLength: 64
+        osVersion:
+          type: string
+          maxLength: 64
+        deviceModel:
+          type: string
+          maxLength: 128
+        locale:
+          type: string
+          maxLength: 32
+
+    Device:
+      allOf:
+        - $ref: "#/components/schemas/DeviceInfo"
+        - type: object
+          required: [id, loginIds, createdAt, updatedAt]
+          properties:
+            id:
+              type: integer
+              format: int64
+            loginIds:
+              type: array
+              description: この端末に紐付いているログイン ID (多対多)
+              items:
+                type: string
+            createdAt:
+              type: string
+              format: date-time
+            updatedAt:
+              type: string
+              format: date-time
+
+    SendNotificationRequest:
+      type: object
+      required: [loginIds, title]
+      properties:
+        loginIds:
+          type: array
+          minItems: 1
+          maxItems: 1000
+          items:
+            type: string
+        title:
+          type: string
+          maxLength: 256
+        body:
+          type: string
+          maxLength: 4096
+        url:
+          type: string
+          format: uri
+          description: 通知タップ時に WebView で開く URL
+        data:
+          type: object
+          additionalProperties: true
+          description: 任意の付加データ (アプリ側に `data` としてそのまま渡る)
+        badge:
+          type: integer
+        sound:
+          type: string
+          description: iOS のサウンド ("default" など)
+        channelId:
+          type: string
+          description: Android の通知チャンネル ID
+
+    SendNotificationResult:
+      type: object
+      required: [requested, sent, failed, results]
+      properties:
+        requested:
+          type: integer
+          description: 宛先端末数
+        sent:
+          type: integer
+        failed:
+          type: integer
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/DeliveryResult"
+
+    DeliveryResult:
+      type: object
+      description: 端末ごとの送信結果。同じ端末に複数の宛先ログイン ID が該当しても 1 通にまとめる
+      required: [installationId, loginIds, status]
+      properties:
+        installationId:
+          type: string
+        loginIds:
+          type: array
+          description: リクエストの loginIds のうち、この端末に紐付いていたもの
+          items:
+            type: string
+        status:
+          type: string
+          enum: [ok, error]
+        error:
+          type: string
+          description: プッシュサービスからのエラー内容
+        unregistered:
+          type: boolean
+          description: トークン失効により端末登録を削除した場合 true
