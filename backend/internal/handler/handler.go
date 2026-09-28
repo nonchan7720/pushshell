@@ -7,11 +7,13 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sort"
 	"strings"
 
 	"github.com/nonchan7720/webapp-notification/backend/internal/api"
 	"github.com/nonchan7720/webapp-notification/backend/internal/ent"
 	"github.com/nonchan7720/webapp-notification/backend/internal/ent/device"
+	"github.com/nonchan7720/webapp-notification/backend/internal/ent/devicelogin"
 	"github.com/nonchan7720/webapp-notification/backend/internal/push"
 )
 
@@ -45,6 +47,10 @@ func (h *Handler) Healthz(context.Context, api.HealthzRequestObject) (api.Health
 }
 
 // RegisterDevice implements api.StrictServerInterface.
+//
+// installationId をキーに端末を upsert し、loginId をその端末に紐付ける
+// (端末とログイン ID は多対多。DeviceLogin テーブル)。既に紐付いている場合は
+// 何もしない (端末情報だけ更新する)。
 func (h *Handler) RegisterDevice(ctx context.Context, req api.RegisterDeviceRequestObject) (api.RegisterDeviceResponseObject, error) {
 	body := req.Body
 	if body == nil {
@@ -68,7 +74,6 @@ func (h *Handler) RegisterDevice(ctx context.Context, req api.RegisterDeviceRequ
 
 	err := h.db.Device.Create().
 		SetInstallationID(body.InstallationId).
-		SetLoginID(body.LoginId).
 		SetPlatform(device.Platform(body.Platform)).
 		SetNillablePushToken(body.PushToken).
 		SetNillableDeviceToken(body.DeviceToken).
@@ -89,12 +94,57 @@ func (h *Handler) RegisterDevice(ctx context.Context, req api.RegisterDeviceRequ
 	if err != nil {
 		return nil, fmt.Errorf("load device: %w", err)
 	}
+
+	if err := h.linkLogin(ctx, d.ID, body.LoginId); err != nil {
+		return nil, fmt.Errorf("link login: %w", err)
+	}
+
+	loginIDs, err := h.loginIDsForDevice(ctx, d.ID)
+	if err != nil {
+		return nil, fmt.Errorf("load logins: %w", err)
+	}
+
 	h.logger.Info("device registered",
-		"installationId", d.InstallationID, "loginId", d.LoginID, "platform", d.Platform)
-	return api.RegisterDevice200JSONResponse(toAPIDevice(d)), nil
+		"installationId", d.InstallationID, "loginId", body.LoginId, "platform", d.Platform)
+	return api.RegisterDevice200JSONResponse(toAPIDevice(d, loginIDs)), nil
+}
+
+// linkLogin は device (id=deviceID) と loginID を紐付ける (既に紐付いていれば
+// 何もしない)。unique index (login_id, device) への upsert で行うので、
+// 並行呼び出しに対しても安全。
+func (h *Handler) linkLogin(ctx context.Context, deviceID int, loginID string) error {
+	err := h.db.DeviceLogin.Create().
+		SetDeviceID(deviceID).
+		SetLoginID(loginID).
+		OnConflictColumns(devicelogin.FieldLoginID, devicelogin.DeviceColumn).
+		DoNothing().
+		Exec(ctx)
+	if err != nil && !ent.IsConstraintError(err) {
+		return err
+	}
+	return nil
+}
+
+// loginIDsForDevice は device (id=deviceID) に紐付いている loginId 一覧を返す
+// (安定した順序にするためソート済み)。
+func (h *Handler) loginIDsForDevice(ctx context.Context, deviceID int) ([]string, error) {
+	links, err := h.db.DeviceLogin.Query().
+		Where(devicelogin.HasDeviceWith(device.ID(deviceID))).
+		All(ctx)
+	if err != nil {
+		return nil, err
+	}
+	loginIDs := make([]string, len(links))
+	for i, l := range links {
+		loginIDs[i] = l.LoginID
+	}
+	sort.Strings(loginIDs)
+	return loginIDs, nil
 }
 
 // UnregisterDevice implements api.StrictServerInterface.
+//
+// 端末自体を削除する (紐付いている DeviceLogin も ON DELETE CASCADE で消える)。
 func (h *Handler) UnregisterDevice(ctx context.Context, req api.UnregisterDeviceRequestObject) (api.UnregisterDeviceResponseObject, error) {
 	d, err := h.db.Device.Query().Where(device.InstallationID(req.InstallationId)).Only(ctx)
 	if err != nil {
@@ -103,7 +153,8 @@ func (h *Handler) UnregisterDevice(ctx context.Context, req api.UnregisterDevice
 		}
 		return nil, fmt.Errorf("load device: %w", err)
 	}
-	if err := h.authorizer.AuthorizeDevice(ctx, d.LoginID, bearerFromContext(ctx)); err != nil {
+	// 特定のログイン ID に紐付く操作ではないので "" を渡す (既定の AllowAll は無条件に許可する)。
+	if err := h.authorizer.AuthorizeDevice(ctx, "", bearerFromContext(ctx)); err != nil {
 		if errors.Is(err, ErrUnauthorized) {
 			return api.UnregisterDevice401JSONResponse{UnauthorizedJSONResponse: api.UnauthorizedJSONResponse{
 				Code: "unauthorized", Message: err.Error(),
@@ -114,8 +165,51 @@ func (h *Handler) UnregisterDevice(ctx context.Context, req api.UnregisterDevice
 	if err := h.db.Device.DeleteOne(d).Exec(ctx); err != nil && !ent.IsNotFound(err) {
 		return nil, fmt.Errorf("delete device: %w", err)
 	}
-	h.logger.Info("device unregistered", "installationId", d.InstallationID, "loginId", d.LoginID)
+	h.logger.Info("device unregistered", "installationId", d.InstallationID)
 	return api.UnregisterDevice204Response{}, nil
+}
+
+// UnregisterDeviceLogin implements api.StrictServerInterface.
+//
+// 端末自体とトークンは残し、指定した loginId との紐付けだけを外す。
+func (h *Handler) UnregisterDeviceLogin(ctx context.Context, req api.UnregisterDeviceLoginRequestObject) (api.UnregisterDeviceLoginResponseObject, error) {
+	d, err := h.db.Device.Query().Where(device.InstallationID(req.InstallationId)).Only(ctx)
+	if err != nil {
+		if ent.IsNotFound(err) {
+			return api.UnregisterDeviceLogin204Response{}, nil
+		}
+		return nil, fmt.Errorf("load device: %w", err)
+	}
+	if err := h.authorizer.AuthorizeDevice(ctx, req.LoginId, bearerFromContext(ctx)); err != nil {
+		if errors.Is(err, ErrUnauthorized) {
+			return api.UnregisterDeviceLogin401JSONResponse{UnauthorizedJSONResponse: api.UnauthorizedJSONResponse{
+				Code: "unauthorized", Message: err.Error(),
+			}}, nil
+		}
+		return nil, fmt.Errorf("authorize device: %w", err)
+	}
+	n, err := h.db.DeviceLogin.Delete().
+		Where(devicelogin.LoginID(req.LoginId), devicelogin.HasDeviceWith(device.ID(d.ID))).
+		Exec(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("unlink login: %w", err)
+	}
+	if n > 0 {
+		h.logger.Info("device login unlinked", "installationId", d.InstallationID, "loginId", req.LoginId)
+	}
+	return api.UnregisterDeviceLogin204Response{}, nil
+}
+
+// UnregisterLogin implements api.StrictServerInterface.
+//
+// loginId を全端末から外す (サーバー間、apiKeyAuth のみ)。端末自体は残る。
+func (h *Handler) UnregisterLogin(ctx context.Context, req api.UnregisterLoginRequestObject) (api.UnregisterLoginResponseObject, error) {
+	n, err := h.db.DeviceLogin.Delete().Where(devicelogin.LoginID(req.LoginId)).Exec(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("unlink login: %w", err)
+	}
+	h.logger.Info("login unregistered from all devices", "loginId", req.LoginId, "removed", n)
+	return api.UnregisterLogin200JSONResponse{Removed: n}, nil
 }
 
 // GetDevice implements api.StrictServerInterface.
@@ -129,7 +223,11 @@ func (h *Handler) GetDevice(ctx context.Context, req api.GetDeviceRequestObject)
 		}
 		return nil, fmt.Errorf("load device: %w", err)
 	}
-	return api.GetDevice200JSONResponse(toAPIDevice(d)), nil
+	loginIDs, err := h.loginIDsForDevice(ctx, d.ID)
+	if err != nil {
+		return nil, fmt.Errorf("load logins: %w", err)
+	}
+	return api.GetDevice200JSONResponse(toAPIDevice(d, loginIDs)), nil
 }
 
 // SendNotification implements api.StrictServerInterface.
@@ -141,19 +239,43 @@ func (h *Handler) SendNotification(ctx context.Context, req api.SendNotification
 		}}, nil
 	}
 
-	devices, err := h.db.Device.Query().
-		Where(device.LoginIDIn(body.LoginIds...)).
-		Order(ent.Asc(device.FieldID)).
+	links, err := h.db.DeviceLogin.Query().
+		Where(devicelogin.LoginIDIn(body.LoginIds...)).
+		WithDevice().
 		All(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("query devices: %w", err)
+		return nil, fmt.Errorf("query device logins: %w", err)
 	}
 
-	result := api.SendNotificationResult{
-		Requested: len(devices),
-		Results:   make([]api.DeliveryResult, 0, len(devices)),
+	// 同じ端末に複数の宛先 loginId が該当しても 1 通にまとめる。
+	type group struct {
+		device   *ent.Device
+		loginIDs []string
 	}
-	if len(devices) == 0 {
+	groups := make(map[int]*group)
+	for _, link := range links {
+		d := link.Edges.Device
+		if d == nil {
+			continue
+		}
+		g, ok := groups[d.ID]
+		if !ok {
+			g = &group{device: d}
+			groups[d.ID] = g
+		}
+		g.loginIDs = append(g.loginIDs, link.LoginID)
+	}
+	deviceIDs := make([]int, 0, len(groups))
+	for id := range groups {
+		deviceIDs = append(deviceIDs, id)
+	}
+	sort.Ints(deviceIDs)
+
+	result := api.SendNotificationResult{
+		Requested: len(deviceIDs),
+		Results:   make([]api.DeliveryResult, 0, len(deviceIDs)),
+	}
+	if len(deviceIDs) == 0 {
 		return api.SendNotification200JSONResponse(result), nil
 	}
 
@@ -167,8 +289,12 @@ func (h *Handler) SendNotification(ctx context.Context, req api.SendNotification
 		data["url"] = *body.Url
 	}
 
-	messages := make([]push.Message, len(devices))
-	for i, d := range devices {
+	devices := make([]*ent.Device, len(deviceIDs))
+	messages := make([]push.Message, len(deviceIDs))
+	for i, id := range deviceIDs {
+		d := groups[id].device
+		devices[i] = d
+		sort.Strings(groups[id].loginIDs)
 		m := push.Message{
 			Platform:    string(d.Platform),
 			ExpoToken:   d.PushToken,
@@ -201,7 +327,7 @@ func (h *Handler) SendNotification(ctx context.Context, req api.SendNotification
 		r := sent[i]
 		dr := api.DeliveryResult{
 			InstallationId: d.InstallationID,
-			LoginId:        d.LoginID,
+			LoginIds:       groups[d.ID].loginIDs,
 			Status:         api.DeliveryResultStatusOk,
 		}
 		if r.OK {
@@ -228,11 +354,14 @@ func (h *Handler) SendNotification(ctx context.Context, req api.SendNotification
 	return api.SendNotification200JSONResponse(result), nil
 }
 
-func toAPIDevice(d *ent.Device) api.Device {
+func toAPIDevice(d *ent.Device, loginIDs []string) api.Device {
+	if loginIDs == nil {
+		loginIDs = []string{}
+	}
 	return api.Device{
 		Id:             int64(d.ID),
 		InstallationId: d.InstallationID,
-		LoginId:        d.LoginID,
+		LoginIds:       loginIDs,
 		Platform:       api.Platform(d.Platform),
 		PushToken:      optString(d.PushToken),
 		DeviceToken:    optString(d.DeviceToken),
