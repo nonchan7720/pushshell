@@ -243,6 +243,15 @@ run = [
 description = "接続中のエミュレータ/端末に debug APK を入れて起動し、スクリーンショットと logcat を保存 (scripts/android/emulator-smoke.sh)"
 run = "bash scripts/android/emulator-smoke.sh app/android/app/build/outputs/apk/debug/app-debug.apk ${SMOKE_OUT_DIR:-out/android-smoke}"
 
+[tasks."app:build:android:bundle"]
+description = "ローカルで Android release AAB (Google Play 提出用) をビルド (expo prebuild + gradlew bundleRelease)"
+dir = "app"
+run = [
+  "npx expo prebuild --platform android --no-install",
+  "cd android && ./gradlew bundleRelease",
+  "ls -la android/app/build/outputs/bundle/release/",
+]
+
 [tasks."app:install:android"]
 description = "ビルド済み debug APK を接続中の端末 / エミュレータにインストール"
 dir = "app"

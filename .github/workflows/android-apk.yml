@@ -1,7 +1,8 @@
-name: Android APK
+name: Android Build
 
 # 手動実行 (workflow_dispatch) で、ビルド時に注入する設定を input として受け取り
-# APK をビルドして Artifact に保存する。android-emulator.yml からも workflow_call で再利用する。
+# APK (検証・配布テスト用) / AAB (Google Play 提出用) をビルドして Artifact に保存する。
+# android-emulator.yml からも workflow_call で再利用する。
 #
 # 任意の Secrets:
 #   GOOGLE_SERVICES_JSON_BASE64  google-services.json を base64 したもの (FCM を使う場合)
@@ -74,6 +75,11 @@ on:
         type: choice
         options: [release, debug]
         default: release
+      output:
+        description: "成果物の種類 (apk: 検証・配布テスト用 / aab: Google Play 提出用 / both)"
+        type: choice
+        options: [apk, aab, both]
+        default: apk
       architectures:
         description: "ABI (reactNativeArchitectures。例: arm64-v8a,armeabi-v7a,x86_64)"
         type: string
@@ -97,6 +103,7 @@ on:
       uses_cleartext_traffic: { type: boolean, default: false }
       webview_android_layer_type: { type: string, default: "none" }
       build_type: { type: string, default: "release" }
+      output: { type: string, default: "apk" }
       architectures: { type: string, default: "arm64-v8a,armeabi-v7a" }
       use_google_services: { type: boolean, default: false }
     outputs:
@@ -104,8 +111,11 @@ on:
         description: "アップロードした Artifact 名"
         value: ${{ jobs.build.outputs.artifact_name }}
       apk_path:
-        description: "Artifact 内の APK ファイル名"
+        description: "Artifact 内の APK ファイル名 (output が aab のみの場合は空)"
         value: ${{ jobs.build.outputs.apk_path }}
+      aab_path:
+        description: "Artifact 内の AAB ファイル名 (output が apk のみの場合は空)"
+        value: ${{ jobs.build.outputs.aab_path }}
 
 permissions:
   contents: read
@@ -118,9 +128,11 @@ jobs:
     outputs:
       artifact_name: ${{ steps.meta.outputs.artifact_name }}
       apk_path: ${{ steps.meta.outputs.apk_path }}
+      aab_path: ${{ steps.meta.outputs.aab_path }}
     env:
       # push トリガー時は inputs が空なので既定値を補う
       BUILD_TYPE: ${{ inputs.build_type || 'release' }}
+      OUTPUT: ${{ inputs.output || 'apk' }}
       ARCHITECTURES: ${{ inputs.architectures || 'arm64-v8a,armeabi-v7a' }}
       ARTIFACT_SLUG: ${{ inputs.app_slug || 'webapp-notification' }}
       ARTIFACT_VERSION: ${{ inputs.app_version || '1.0.0' }}
@@ -207,26 +219,48 @@ jobs:
       - name: Prebuild (android/)
         run: cd app && npx expo prebuild --platform android --no-install
 
-      - name: Build APK
+      - name: Build (APK / AAB)
         run: |
           cd app/android
-          task=assembleRelease
-          [ "$BUILD_TYPE" = "debug" ] && task=assembleDebug
-          ./gradlew "$task" -PreactNativeArchitectures="$ARCHITECTURES" --no-daemon
+          suffix=Release
+          [ "$BUILD_TYPE" = "debug" ] && suffix=Debug
+          tasks=""
+          case "$OUTPUT" in
+            apk)  tasks="assemble$suffix" ;;
+            aab)  tasks="bundle$suffix" ;;
+            both) tasks="assemble$suffix bundle$suffix" ;;
+            *) echo "::error::unknown output '$OUTPUT' (apk|aab|both)"; exit 1 ;;
+          esac
+          # AAB は Google Play 提出用 (新規アプリは AAB 必須)。APK は検証・配布テスト用。
+          ./gradlew $tasks -PreactNativeArchitectures="$ARCHITECTURES" --no-daemon
 
-      - name: Collect APK
+      - name: Collect outputs
         id: meta
         run: |
-          apk=$(ls app/android/app/build/outputs/apk/$BUILD_TYPE/*.apk | head -1)
-          name="$ARTIFACT_SLUG-$ARTIFACT_VERSION-$BUILD_TYPE.apk"
-          mkdir -p out && cp "$apk" "out/$name"
-          echo "artifact_name=android-apk-$BUILD_TYPE-${{ github.run_id }}" >> "$GITHUB_OUTPUT"
-          echo "apk_path=$name" >> "$GITHUB_OUTPUT"
+          mkdir -p out
+          base="$ARTIFACT_SLUG-$ARTIFACT_VERSION-$BUILD_TYPE"
+          if [ "$OUTPUT" != "aab" ]; then
+            apk=$(ls app/android/app/build/outputs/apk/$BUILD_TYPE/*.apk | head -1)
+            cp "$apk" "out/$base.apk"
+            echo "apk_path=$base.apk" >> "$GITHUB_OUTPUT"
+          else
+            echo "apk_path=" >> "$GITHUB_OUTPUT"
+          fi
+          if [ "$OUTPUT" != "apk" ]; then
+            aab=$(ls app/android/app/build/outputs/bundle/$BUILD_TYPE/*.aab | head -1)
+            cp "$aab" "out/$base.aab"
+            echo "aab_path=$base.aab" >> "$GITHUB_OUTPUT"
+          else
+            echo "aab_path=" >> "$GITHUB_OUTPUT"
+          fi
+          echo "artifact_name=android-$OUTPUT-$BUILD_TYPE-${{ github.run_id }}" >> "$GITHUB_OUTPUT"
           ls -la out
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: android-apk-${{ inputs.build_type || 'release' }}-${{ github.run_id }}
-          path: out/*.apk
+          name: android-${{ inputs.output || 'apk' }}-${{ inputs.build_type || 'release' }}-${{ github.run_id }}
+          path: |
+            out/*.apk
+            out/*.aab
           retention-days: 14
           if-no-files-found: error
