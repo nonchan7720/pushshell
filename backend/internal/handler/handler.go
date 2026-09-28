@@ -110,16 +110,19 @@ func (h *Handler) RegisterDevice(ctx context.Context, req api.RegisterDeviceRequ
 }
 
 // linkLogin は device (id=deviceID) と loginID を紐付ける (既に紐付いていれば
-// 何もしない)。unique index (login_id, device) への upsert で行うので、
-// 並行呼び出しに対しても安全。
+// 何もしない)。query-then-create で行い、並行呼び出しでの unique 制約違反
+// (devicelogin_login_id_device_logins) は「既に紐付いている」とみなして無視する。
 func (h *Handler) linkLogin(ctx context.Context, deviceID int, loginID string) error {
-	err := h.db.DeviceLogin.Create().
-		SetDeviceID(deviceID).
-		SetLoginID(loginID).
-		OnConflictColumns(devicelogin.FieldLoginID, devicelogin.DeviceColumn).
-		DoNothing().
-		Exec(ctx)
-	if err != nil && !ent.IsConstraintError(err) {
+	exists, err := h.db.DeviceLogin.Query().
+		Where(devicelogin.LoginID(loginID), devicelogin.HasDeviceWith(device.ID(deviceID))).
+		Exist(ctx)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return nil
+	}
+	if _, err := h.db.DeviceLogin.Create().SetDeviceID(deviceID).SetLoginID(loginID).Save(ctx); err != nil && !ent.IsConstraintError(err) {
 		return err
 	}
 	return nil

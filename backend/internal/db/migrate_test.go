@@ -74,23 +74,41 @@ func TestSQLiteMigrationMatchesEntSchema(t *testing.T) {
 
 	d, err := client.Device.Create().
 		SetInstallationID("inst-1").
-		SetLoginID("user-1").
 		SetPlatform(device.PlatformIos).
 		SetPushToken("ExponentPushToken[xxxxxxxxxxxxxxxxxxxxxx]").
 		Save(ctx)
 	if err != nil {
 		t.Fatalf("create device: %v", err)
 	}
+	if _, err := client.DeviceLogin.Create().SetDeviceID(d.ID).SetLoginID("user-1").Save(ctx); err != nil {
+		t.Fatalf("create device login: %v", err)
+	}
 
 	got, err := client.Device.Get(ctx, d.ID)
 	if err != nil {
 		t.Fatalf("get device: %v", err)
 	}
-	if got.InstallationID != "inst-1" || got.LoginID != "user-1" || got.Platform != device.PlatformIos {
+	if got.InstallationID != "inst-1" || got.Platform != device.PlatformIos {
 		t.Fatalf("unexpected device after round-trip: %+v", got)
 	}
 	if got.CreatedAt.IsZero() || got.UpdatedAt.IsZero() {
 		t.Fatalf("expected created_at/updated_at to be set: %+v", got)
+	}
+
+	logins, err := got.QueryLogins().All(ctx)
+	if err != nil {
+		t.Fatalf("query logins: %v", err)
+	}
+	if len(logins) != 1 || logins[0].LoginID != "user-1" {
+		t.Fatalf("unexpected logins: %+v", logins)
+	}
+
+	// ON DELETE CASCADE: deleting the device must remove its DeviceLogin rows too.
+	if err := client.Device.DeleteOne(got).Exec(ctx); err != nil {
+		t.Fatalf("delete device: %v", err)
+	}
+	if n := client.DeviceLogin.Query().CountX(ctx); n != 0 {
+		t.Fatalf("expected device_logins to cascade-delete, got %d rows", n)
 	}
 }
 

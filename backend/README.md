@@ -13,7 +13,7 @@ backend/
 ├── internal/
 │   ├── config/            # 環境変数 → Config
 │   ├── db/                # dialect ごとに ent.Client を開く
-│   ├── ent/                # ent (生成コード)。スキーマは internal/ent/schema/device.go
+│   ├── ent/                # ent (生成コード)。スキーマは internal/ent/schema/{device,device_login}.go
 │   ├── api/                # oapi-codegen 生成コード (../openapi/openapi.yaml から)
 │   ├── handler/            # api.StrictServerInterface の実装 (ビジネスロジック)
 │   ├── push/                # プッシュ通知の送信 (Sender インターフェース。既定は Expo Push API)
@@ -26,9 +26,33 @@ backend/
 └── .env.example
 ```
 
-データモデルは `Device` 1 テーブルのみ (`internal/ent/schema/device.go`)。
-`installation_id` (アプリインストール単位、unique) で upsert し、`login_id`
-(Web アプリのログイン ID) で通知の宛先を引く。
+データモデルは `Device` と `DeviceLogin` の 2 テーブル
+(`internal/ent/schema/device.go`, `internal/ent/schema/device_login.go`)。
+`Device` は `installation_id` (アプリインストール単位、unique) で upsert される
+端末そのもの (トークン・端末情報)。`DeviceLogin` は `Device` と Web アプリの
+ログイン ID を結ぶ中間テーブルで、**端末とログイン ID は多対多**
+(1 端末に複数アカウントがログインしていてもよいし、1 アカウントが複数端末
+[スマホ + タブレットなど] を持っていてもよい)。`Device` の削除は
+`DeviceLogin` を `ON DELETE CASCADE` で道連れにする。通知はログイン ID から
+`DeviceLogin` 経由で端末を引く (`POST /v1/notifications`)。
+
+- `POST /v1/devices` (`registerDevice`): `installationId` で端末を upsert し、
+  `loginId` をその端末に**追加で**紐付ける (既存の紐付けは消えない。同じ
+  `installationId` に 2 つ目、3 つ目の `loginId` を登録すると、その端末は
+  複数アカウント分の通知を受け取るようになる)。
+- `DELETE /v1/devices/{installationId}` (`unregisterDevice`): 端末ごと削除
+  (紐付いていた `loginId` も全部消える)。アプリが自分の端末を完全に解除する
+  とき (アンインストール相当) に使う。
+- `DELETE /v1/devices/{installationId}/logins/{loginId}` (`unregisterDeviceLogin`):
+  端末はそのまま残し、指定した `loginId` との紐付けだけを外す。**通常の
+  ログアウトはこちら** — 端末自体・他のログイン ID の紐付け・トークンは
+  影響を受けない。アプリ本体から呼ぶほか、Web アプリのバックエンドが
+  セッション失効を検知したときに API キーで呼んでもよい (`installationId`
+  は bridge の `ready` イベントで Web アプリ側に渡る)。
+- `DELETE /v1/logins/{loginId}` (`unregisterLogin`、`apiKeyAuth` のみ):
+  そのログイン ID を**全端末から**外す (サーバー間)。Web アプリ側でセッション
+  が失効・無効化された (全端末ログアウト、退会など) ときに Web アプリの
+  バックエンドから呼ぶ。応答は `{ "removed": <紐付けを外した端末数> }`。
 
 ## セットアップ
 
@@ -178,6 +202,13 @@ go run ./cmd/migrate diff init --dialect sqlite
 書き出さずにその旨を表示する)。`--dev-url` で diff 計算に使う dev
 database を指定できる (既定値は dialect ごとに以下):
 
+`--drop-column` / `--drop-index` (既定は両方 false。ent 自体の既定と同じ)
+を渡さない限り、ent スキーマから消したフィールド・インデックスがあっても
+生成される migration はそれに対応する列・インデックスを DB から
+消さない (フィールドをうっかり消しても既存データが暗黙に失われないための
+安全策)。フィールドを本当に削除する migration を作るときだけ明示的に
+両方 (または該当する方) を付ける。
+
 | dialect | 既定の dev-url |
 |---|---|
 | sqlite | `sqlite://file?mode=memory&_fk=1` |
@@ -246,17 +277,21 @@ insert/get できることを検証している。`internal/ent/schema` を変�
 OpenAPI 定義は `../openapi/openapi.yaml`。認証は 2 種類:
 
 - `X-API-Key: <API_KEY>` — サーバー間 API (`POST /v1/notifications`,
-  `GET /v1/devices/{installationId}`)
-- `Authorization: Bearer <token>` — 端末登録・解除 (`POST`/`DELETE
-  /v1/devices`)。既定の `handler.AllowAll` はトークンを検証しないが、
-  `handler.Authorizer` を実装すれば Web アプリのセッションを検証できる
-  (下記)
+  `GET /v1/devices/{installationId}`, `DELETE /v1/logins/{loginId}`。
+  `DELETE /v1/devices/{installationId}/logins/{loginId}` は Bearer との
+  どちらでも可)
+- `Authorization: Bearer <token>` — 端末登録・解除
+  (`POST /v1/devices`, `DELETE /v1/devices/{installationId}`,
+  `DELETE /v1/devices/{installationId}/logins/{loginId}`)。既定の
+  `handler.AllowAll` はトークンを検証しないが、`handler.Authorizer` を
+  実装すれば Web アプリのセッションを検証できる (下記)
 
 ```sh
 # ヘルスチェック
 curl localhost:8080/healthz
 
-# 端末登録 (ログイン + プッシュ通知の許可後に呼ぶ想定)
+# 端末登録 (ログイン + プッシュ通知の許可後に呼ぶ想定)。
+# 同じ installationId に別の loginId を登録すると「追加」される (多対多)。
 curl -X POST localhost:8080/v1/devices \
   -H 'Content-Type: application/json' \
   -d '{
@@ -266,7 +301,8 @@ curl -X POST localhost:8080/v1/devices \
     "pushToken": "ExponentPushToken[xxxxxxxxxxxxxxxxxxxxxx]"
   }'
 
-# 通知送信 (loginId 単位。同じ loginId に複数端末が登録されていれば全部に送る)
+# 通知送信 (loginId 単位。同じ loginId に複数端末が登録されていれば全部に送る。
+# 1 端末が複数の指定 loginId を持っていても通知は 1 通にまとめられる)
 curl -X POST localhost:8080/v1/notifications \
   -H 'X-API-Key: dev' \
   -H 'Content-Type: application/json' \
@@ -277,8 +313,14 @@ curl -X POST localhost:8080/v1/notifications \
     "url": "https://example.com/messages/1"
   }'
 
-# 端末解除 (ログアウト時)
+# ログアウト (このアカウントの紐付けだけ外す。端末自体・他のアカウントの紐付けは残る)
+curl -X DELETE localhost:8080/v1/devices/install-uuid-1/logins/u1
+
+# 端末を丸ごと解除 (アプリのアンインストール相当。紐付いていた全 loginId ごと消える)
 curl -X DELETE localhost:8080/v1/devices/install-uuid-1
+
+# Web アプリ側のセッション失効時にバックエンドから呼ぶ (全端末からそのログイン ID を外す)
+curl -X DELETE localhost:8080/v1/logins/u1 -H 'X-API-Key: dev'
 ```
 
 ## 差し替えポイント

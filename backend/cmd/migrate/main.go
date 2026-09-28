@@ -104,11 +104,18 @@ func main() {
 
 func usage() {
 	fmt.Fprintln(os.Stderr, `Usage:
-  go run ./cmd/migrate diff <name> --dialect sqlite|mysql|postgres [--dev-url <url>] [--dir <path>]
+  go run ./cmd/migrate diff <name> --dialect sqlite|mysql|postgres [--dev-url <url>] [--dir <path>] [--drop-column] [--drop-index]
 
 Generates a versioned migration file for the ent schema (internal/ent/schema)
 via the ent + Atlas Go libraries, without using the Atlas CLI's ent:// schema
-loader. Files are written to migrations/<dialect>/ by default.`)
+loader. Files are written to migrations/<dialect>/ by default.
+
+--drop-column / --drop-index default to false (ent's own default): a field or
+index removed from the ent schema is left alone in the generated migration
+unless one of these flags is passed, so accidentally deleting a schema field
+never silently drops a database column. Pass them when a migration is meant
+to remove a column/index (e.g. after actually deleting a field from the ent
+schema).`)
 }
 
 func runDiff(args []string) error {
@@ -116,11 +123,15 @@ func runDiff(args []string) error {
 	dialectFlag := fs.String("dialect", "sqlite", "sqlite | mysql | postgres")
 	devURLFlag := fs.String("dev-url", "", "dev database URL used to compute the diff (defaults per --dialect)")
 	dirFlag := fs.String("dir", "", "migration directory (defaults to migrations/<dialect>)")
+	dropColumnFlag := fs.Bool("drop-column", false, "drop columns removed from the ent schema (ent default: false)")
+	dropIndexFlag := fs.Bool("drop-index", false, "drop indexes removed from the ent schema (ent default: false)")
 	// The name is positional and documented to come first ("diff <name>
 	// --dialect ..."), but the flag package only parses flags up to the
 	// first non-flag argument and treats everything after as positional.
 	// Pull the (single) positional argument out by hand so flags can follow
 	// it, then hand the rest to fs.Parse as normal.
+	// Boolean flags never consume the following token (see the loop below).
+	boolFlags := map[string]bool{"drop-column": true, "drop-index": true}
 	var name string
 	flagArgs := make([]string, 0, len(args))
 	for i := 0; i < len(args); i++ {
@@ -132,10 +143,8 @@ func runDiff(args []string) error {
 		case strings.HasPrefix(a, "-"):
 			flagArgs = append(flagArgs, a)
 			// A flag of the form "-x value" (not "-x=value") consumes the
-			// next argument too, unless it is a boolean flag; none of ours
-			// are boolean, so always take the next token when present and
-			// the flag itself has no "=".
-			if !strings.Contains(a, "=") && i+1 < len(args) {
+			// next argument too, unless it is a boolean flag (boolFlags).
+			if !strings.Contains(a, "=") && !boolFlags[strings.TrimLeft(a, "-")] && i+1 < len(args) {
 				i++
 				flagArgs = append(flagArgs, args[i])
 			}
@@ -184,6 +193,8 @@ func runDiff(args []string) error {
 		schema.WithMigrationMode(schema.ModeReplay),
 		schema.WithDialect(d),
 		schema.WithFormatter(atlasmigrate.DefaultFormatter),
+		schema.WithDropColumn(*dropColumnFlag),
+		schema.WithDropIndex(*dropIndexFlag),
 	)
 	switch {
 	case errors.Is(err, atlasmigrate.ErrNoPlan):
