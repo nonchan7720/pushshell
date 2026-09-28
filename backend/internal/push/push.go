@@ -1,6 +1,7 @@
 // Package push はプッシュ通知の送信を抽象化する。
-// 既定の実装は Expo Push API (expo.go)。FCM / APNs を直接使いたい場合は
-// Sender を実装して server.New に渡す。
+// 既定の実装は Expo Push API (expo.go)。FCM (fcm.go) / APNs (apns.go) を
+// 直接使いたい場合は NativeSender (native.go) を、独自のバックエンドを使い
+// たい場合は Sender を実装して server.New に渡す。
 package push
 
 import (
@@ -10,14 +11,21 @@ import (
 
 // Message は 1 端末宛のプッシュ通知。
 type Message struct {
-	// To は Expo Push Token (ExponentPushToken[...])。
-	To        string
-	Title     string
-	Body      string
-	Data      map[string]any
-	Sound     string
-	Badge     *int
-	ChannelID string
+	// Platform は "ios" | "android"。NativeSender が Android/iOS の
+	// どちらの Sender (FCM/APNs) に振り分けるかに使う。
+	Platform string
+	// ExpoToken は Expo Push Token (ExponentPushToken[...])。ExpoSender が使う。
+	ExpoToken string
+	// DeviceToken はネイティブのデバイストークン
+	// (Android は FCM registration token、iOS は APNs device token の hex)。
+	// FCMSender / APNSSender / NativeSender が使う。
+	DeviceToken string
+	Title       string
+	Body        string
+	Data        map[string]any
+	Sound       string
+	Badge       *int
+	ChannelID   string
 }
 
 // Result は 1 通の送信結果。
@@ -49,7 +57,9 @@ func (s LogSender) Send(_ context.Context, messages []Message) ([]Result, error)
 	}
 	results := make([]Result, len(messages))
 	for i, m := range messages {
-		logger.Info("push (log provider)", "to", m.To, "title", m.Title, "body", m.Body, "data", m.Data)
+		logger.Info("push (log provider)",
+			"platform", m.Platform, "expoToken", m.ExpoToken, "deviceToken", m.DeviceToken,
+			"title", m.Title, "body", m.Body, "data", m.Data)
 		results[i] = Result{OK: true}
 	}
 	return results, nil

@@ -67,10 +67,39 @@ func (s *ExpoSender) Send(ctx context.Context, messages []Message) ([]Result, er
 	return results, nil
 }
 
+// expoTarget は expoToken を持つメッセージを、元の messages 内でのインデックス
+// と一緒に保持する (トークンなしのメッセージを送信対象から除きつつ、結果の
+// 順序を保つため)。
+type expoTarget struct {
+	idx int
+	msg Message
+}
+
 func (s *ExpoSender) sendBatch(ctx context.Context, messages []Message) ([]Result, error) {
-	payload := make([]expoMessage, len(messages))
+	results := make([]Result, len(messages))
+	targets := make([]expoTarget, 0, len(messages))
 	for i, m := range messages {
-		payload[i] = expoMessage(m)
+		if m.ExpoToken == "" {
+			results[i] = Result{Error: "device has no expo push token"}
+			continue
+		}
+		targets = append(targets, expoTarget{idx: i, msg: m})
+	}
+	if len(targets) == 0 {
+		return results, nil
+	}
+
+	payload := make([]expoMessage, len(targets))
+	for i, t := range targets {
+		payload[i] = expoMessage{
+			To:        t.msg.ExpoToken,
+			Title:     t.msg.Title,
+			Body:      t.msg.Body,
+			Data:      t.msg.Data,
+			Sound:     t.msg.Sound,
+			Badge:     t.msg.Badge,
+			ChannelID: t.msg.ChannelID,
+		}
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -115,14 +144,14 @@ func (s *ExpoSender) sendBatch(ctx context.Context, messages []Message) ([]Resul
 	if len(parsed.Errors) > 0 {
 		return nil, fmt.Errorf("expo: %s: %s", parsed.Errors[0].Code, parsed.Errors[0].Message)
 	}
-	if len(parsed.Data) != len(messages) {
-		return nil, fmt.Errorf("expo: ticket count mismatch: got %d want %d", len(parsed.Data), len(messages))
+	if len(parsed.Data) != len(targets) {
+		return nil, fmt.Errorf("expo: ticket count mismatch: got %d want %d", len(parsed.Data), len(targets))
 	}
 
-	results := make([]Result, len(parsed.Data))
 	for i, t := range parsed.Data {
+		idx := targets[i].idx
 		if t.Status == "ok" {
-			results[i] = Result{OK: true}
+			results[idx] = Result{OK: true}
 			continue
 		}
 		r := Result{Error: t.Message}
@@ -132,7 +161,7 @@ func (s *ExpoSender) sendBatch(ctx context.Context, messages []Message) ([]Resul
 			}
 			r.Unregistered = t.Details.Error == "DeviceNotRegistered"
 		}
-		results[i] = r
+		results[idx] = r
 	}
 	return results, nil
 }

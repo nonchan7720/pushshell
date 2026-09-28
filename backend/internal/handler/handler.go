@@ -52,6 +52,11 @@ func (h *Handler) RegisterDevice(ctx context.Context, req api.RegisterDeviceRequ
 			Code: "invalid_request", Message: "request body is required",
 		}}, nil
 	}
+	if isEmptyOrNil(body.PushToken) && isEmptyOrNil(body.DeviceToken) {
+		return api.RegisterDevice400JSONResponse{BadRequestJSONResponse: api.BadRequestJSONResponse{
+			Code: "invalid_request", Message: "at least one of pushToken or deviceToken is required",
+		}}, nil
+	}
 	if err := h.authorizer.AuthorizeDevice(ctx, body.LoginId, bearerFromContext(ctx)); err != nil {
 		if errors.Is(err, ErrUnauthorized) {
 			return api.RegisterDevice401JSONResponse{UnauthorizedJSONResponse: api.UnauthorizedJSONResponse{
@@ -65,7 +70,7 @@ func (h *Handler) RegisterDevice(ctx context.Context, req api.RegisterDeviceRequ
 		SetInstallationID(body.InstallationId).
 		SetLoginID(body.LoginId).
 		SetPlatform(device.Platform(body.Platform)).
-		SetPushToken(body.PushToken).
+		SetNillablePushToken(body.PushToken).
 		SetNillableDeviceToken(body.DeviceToken).
 		SetNillableAppID(body.AppId).
 		SetNillableAppVersion(body.AppVersion).
@@ -165,10 +170,12 @@ func (h *Handler) SendNotification(ctx context.Context, req api.SendNotification
 	messages := make([]push.Message, len(devices))
 	for i, d := range devices {
 		m := push.Message{
-			To:    d.PushToken,
-			Title: body.Title,
-			Data:  data,
-			Badge: body.Badge,
+			Platform:    string(d.Platform),
+			ExpoToken:   d.PushToken,
+			DeviceToken: d.DeviceToken,
+			Title:       body.Title,
+			Data:        data,
+			Badge:       body.Badge,
 		}
 		if body.Body != nil {
 			m.Body = *body.Body
@@ -227,7 +234,7 @@ func toAPIDevice(d *ent.Device) api.Device {
 		InstallationId: d.InstallationID,
 		LoginId:        d.LoginID,
 		Platform:       api.Platform(d.Platform),
-		PushToken:      d.PushToken,
+		PushToken:      optString(d.PushToken),
 		DeviceToken:    optString(d.DeviceToken),
 		AppId:          optString(d.AppID),
 		AppVersion:     optString(d.AppVersion),
@@ -238,6 +245,11 @@ func toAPIDevice(d *ent.Device) api.Device {
 		CreatedAt:      d.CreatedAt,
 		UpdatedAt:      d.UpdatedAt,
 	}
+}
+
+// isEmptyOrNil は *string が nil または空文字列かを返す。
+func isEmptyOrNil(s *string) bool {
+	return s == nil || *s == ""
 }
 
 func optString(s string) *string {
