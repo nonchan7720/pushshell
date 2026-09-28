@@ -109,7 +109,7 @@ func TestRegisterDevice_UpsertAndGet(t *testing.T) {
 		LoginId:        "user-1",
 		InstallationId: "inst-1",
 		Platform:       api.Ios,
-		PushToken:      "ExponentPushToken[aaa]",
+		PushToken:      ptr("ExponentPushToken[aaa]"),
 		AppVersion:     ptr("1.0.0"),
 		DeviceModel:    ptr("iPhone"),
 	}
@@ -126,7 +126,7 @@ func TestRegisterDevice_UpsertAndGet(t *testing.T) {
 
 	// 同じ installationId で別ユーザー・別トークン → 付け替え (行は増えない)
 	reg.LoginId = "user-2"
-	reg.PushToken = "ExponentPushToken[bbb]"
+	reg.PushToken = ptr("ExponentPushToken[bbb]")
 	res2, err := c.RegisterDeviceWithResponse(ctx, reg)
 	if err != nil {
 		t.Fatal(err)
@@ -137,7 +137,7 @@ func TestRegisterDevice_UpsertAndGet(t *testing.T) {
 	if res2.JSON200.Id != res.JSON200.Id {
 		t.Fatalf("expected same row id, got %d and %d", res.JSON200.Id, res2.JSON200.Id)
 	}
-	if res2.JSON200.LoginId != "user-2" || res2.JSON200.PushToken != "ExponentPushToken[bbb]" {
+	if res2.JSON200.LoginId != "user-2" || res2.JSON200.PushToken == nil || *res2.JSON200.PushToken != "ExponentPushToken[bbb]" {
 		t.Fatalf("not updated: %+v", res2.JSON200)
 	}
 	if n := client.Device.Query().CountX(ctx); n != 1 {
@@ -190,6 +190,51 @@ func TestRegisterDevice_Validation(t *testing.T) {
 	}
 }
 
+func TestRegisterDevice_RequiresPushOrDeviceToken(t *testing.T) {
+	srv, client := newTestServer(t, &fakeSender{})
+	c := newClient(t, srv)
+	ctx := context.Background()
+
+	// pushToken も deviceToken もなし → 400 invalid_request
+	res, err := c.RegisterDeviceWithResponse(ctx, api.DeviceRegistration{
+		LoginId:        "u",
+		InstallationId: "inst-none",
+		Platform:       api.Android,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode() != http.StatusBadRequest || res.JSON400 == nil {
+		t.Fatalf("expected 400, got %d %s", res.StatusCode(), res.Body)
+	}
+	if res.JSON400.Code != "invalid_request" {
+		t.Fatalf("unexpected error body: %+v", res.JSON400)
+	}
+	if n := client.Device.Query().CountX(ctx); n != 0 {
+		t.Fatalf("expected no device created, got %d", n)
+	}
+
+	// deviceToken だけ (native モード) → OK
+	res2, err := c.RegisterDeviceWithResponse(ctx, api.DeviceRegistration{
+		LoginId:        "u",
+		InstallationId: "inst-native",
+		Platform:       api.Android,
+		DeviceToken:    ptr("fcm-registration-token"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res2.StatusCode() != http.StatusOK || res2.JSON200 == nil {
+		t.Fatalf("register (deviceToken only): %d %s", res2.StatusCode(), res2.Body)
+	}
+	if res2.JSON200.PushToken != nil {
+		t.Fatalf("expected no pushToken, got %+v", res2.JSON200.PushToken)
+	}
+	if res2.JSON200.DeviceToken == nil || *res2.JSON200.DeviceToken != "fcm-registration-token" {
+		t.Fatalf("unexpected deviceToken: %+v", res2.JSON200)
+	}
+}
+
 func TestUnregisterDevice(t *testing.T) {
 	srv, client := newTestServer(t, &fakeSender{})
 	c := newClient(t, srv)
@@ -224,7 +269,7 @@ func TestSendNotification(t *testing.T) {
 		results: func(msgs []push.Message) []push.Result {
 			out := make([]push.Result, len(msgs))
 			for i, m := range msgs {
-				switch m.To {
+				switch m.ExpoToken {
 				case "dead":
 					out[i] = push.Result{Error: "DeviceNotRegistered", Unregistered: true}
 				default:
@@ -281,6 +326,9 @@ func TestSendNotification(t *testing.T) {
 	if m.Title != "hello" || m.Body != "world" || m.Data["url"] != "https://example.com/inbox" || m.Data["kind"] != "message" {
 		t.Fatalf("unexpected message: %+v", m)
 	}
+	if m.Platform != "ios" || m.ExpoToken != "tok-a" {
+		t.Fatalf("unexpected message platform/expoToken: %+v", m)
+	}
 	// 失効した端末は削除される
 	for _, dr := range r.Results {
 		if dr.InstallationId == "b" {
@@ -300,5 +348,46 @@ func TestSendNotification(t *testing.T) {
 	}
 	if none.StatusCode() != http.StatusOK || none.JSON200.Requested != 0 {
 		t.Fatalf("expected empty result, got %d %s", none.StatusCode(), none.Body)
+	}
+}
+
+// TestSendNotification_NativeDevice は pushToken / deviceToken の両方が
+// 登録されている端末について、push.Message が platform / expoToken /
+// deviceToken を正しく埋めることを確認する
+// (PUSH_PROVIDER=native の NativeSender が使う情報)。
+func TestSendNotification_NativeDevice(t *testing.T) {
+	sender := &fakeSender{}
+	srv, client := newTestServer(t, sender)
+	c := newClient(t, srv)
+	ctx := context.Background()
+
+	client.Device.Create().
+		SetInstallationID("native-1").
+		SetLoginID("u1").
+		SetPlatform("android").
+		SetPushToken("ExponentPushToken[aaa]").
+		SetDeviceToken("fcm-registration-token").
+		SaveX(ctx)
+
+	req := api.SendNotificationRequest{LoginIds: []string{"u1"}, Title: "hello"}
+	res, err := c.SendNotificationWithResponse(ctx, req, apiKeyEditor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode() != http.StatusOK || res.JSON200 == nil || res.JSON200.Sent != 1 {
+		t.Fatalf("send: %d %s", res.StatusCode(), res.Body)
+	}
+	if len(sender.sent) != 1 || len(sender.sent[0]) != 1 {
+		t.Fatalf("unexpected sent batches: %+v", sender.sent)
+	}
+	m := sender.sent[0][0]
+	if m.Platform != "android" {
+		t.Fatalf("unexpected platform: %+v", m)
+	}
+	if m.ExpoToken != "ExponentPushToken[aaa]" {
+		t.Fatalf("unexpected expoToken: %+v", m)
+	}
+	if m.DeviceToken != "fcm-registration-token" {
+		t.Fatalf("unexpected deviceToken: %+v", m)
 	}
 }
