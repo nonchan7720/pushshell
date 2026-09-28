@@ -132,6 +132,11 @@ description = "wrangler dev (localhost:8787)。先に worker:install / worker:mi
 dir = "backend/worker"
 run = "npx wrangler dev --port 8787"
 
+[tasks."worker:smoke"]
+description = "ビルド済み worker (build/) を wrangler dev (workerd) + ローカル D1 で起動して API を叩くスモークテスト。SMOKE_EXPO=1 で Expo への実 fetch も検証"
+dir = "backend/worker"
+run = "./smoke.sh"
+
 [tasks."worker:migrate:local"]
 description = "D1 migration をローカル (wrangler dev / Miniflare) に適用"
 dir = "backend/worker"

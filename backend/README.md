@@ -645,6 +645,43 @@ wasm ビルドする ([TinyGo ではない](https://github.com/syumai/workers-go
 リンクしないため `app.wasm` は約 7.98MB (raw) / 約 2.15MB (gzip -9) になる
 (ビルドのたびにサイズを表示する) — 上記「サイズ」参照。
 
+### スモークテスト (`mise run worker:smoke`)
+
+`backend/worker/smoke.sh` は **ビルド済みの `build/app.wasm` を実際の
+Workers ランタイム (workerd, `wrangler dev`) + ローカル D1 で起動して API を
+curl で叩き、ステータスコードとレスポンス本文を検証する**エンドツーエンドの
+スモークテスト。CI (`.github/workflows/ci.yml` の `worker` ジョブ) も
+ビルド → size gate の間にこれを実行するので、「wasm はビルドできたが
+Workers 上では動かない」状態は PR の段階で落ちる。
+
+```sh
+mise run worker:install && mise run worker:build
+mise run worker:smoke                 # PUSH_PROVIDER=log (外部ネットワーク不要)
+SMOKE_EXPO=1 mise run worker:smoke    # + Expo Push API への実 fetch (exp.host への到達が必要)
+```
+
+- `./wrangler.toml` / `.dev.vars` は使わず、`.wrangler/smoke/` (gitignore)
+  に生成した専用の設定ファイルと `--persist-to` の空の状態ディレクトリで
+  起動する。`wrangler dev --var` は `[vars]` を上書きしないため、
+  開発者のローカル設定に左右されず、毎回まっさらな D1 で実行できる。
+  `compatibility_date` と `migrations/` は本物の `wrangler.toml` と共有。
+- 検証内容: `GET /healthz`、`POST /v1/devices` (同じ端末に 2 つ目の
+  `loginId` を追加すると `loginIds` が増える)、`GET /v1/devices/{id}`
+  (API キーなし 401 / あり 200)、生成サーバーによる 400 (型違いの JSON、
+  必須項目欠落)、未知パスの 404、`DELETE .../logins/{loginId}` 後の
+  `loginIds`、`DELETE /v1/logins/{loginId}` の `removed`、端末削除後の 404、
+  `POST /v1/notifications` (API キーなし 401、未知ログイン ID は
+  `requested: 0`、2 ログイン ID が同じ端末なら 1 通に重複排除して
+  `sent: 1`) とワーカーログ内の `push (log provider)` 行。
+- `SMOKE_EXPO=1`: 通知送信を `PUSH_PROVIDER=expo` で行い、ダミーの
+  `ExponentPushToken[smoke]` に対して Expo API が返す
+  `DeviceNotRegistered` (アプリケーションレベルのエラー = outbound fetch が
+  `internal/push` の fetch ベース HTTP クライアント経由で実際に届いている
+  証拠) と、その結果バックエンドが端末を自動削除して `GET` が 404 になる
+  ことまで検証する。
+- 失敗時は wrangler のログ (`.wrangler/smoke/wrangler.log`) を出力する。
+  CI では同じログを Artifact `worker-smoke-wrangler-log` に保存する。
+
 ### D1 migration (`backend/worker/migrations/`)
 
 D1 は `wrangler d1 migrations` で管理する専用の migration 形式
@@ -670,6 +707,10 @@ D1 は `wrangler d1 migrations` で管理する専用の migration 形式
 `mise run worker:migrate:local`。
 
 ### ローカルでの動作確認 (実施内容)
+
+以下のシナリオは現在 `mise run worker:smoke` (上記) として自動化してあり、
+ローカルと CI の両方で実行している (Expo への実 fetch は `SMOKE_EXPO=1`
+のときだけ)。
 
 ent/atlas/kin-openapi を切り離して `internal/store/sqlstore` (素の
 `database/sql`) に置き換えた後も、`wrangler dev` (workerd + ローカル D1)

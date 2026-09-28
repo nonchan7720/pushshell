@@ -124,7 +124,7 @@ mysql / postgres の migration 生成には Atlas の dev database として Doc
 
 | ワークフロー | トリガー | 内容 |
 |---|---|---|
-| `ci.yml` | PR / main への push | 生成コードが最新か、vet / lint / test、CGO なしビルド、migration の整合、アプリの typecheck |
+| `ci.yml` | PR / main への push | `backend`: 生成コードが最新か、vet / lint / test、CGO なしビルド、migration の整合。`worker`: wasm ビルド、ent / atlas / kin-openapi 非リンクの確認、ビルド済み wasm を wrangler dev (workerd) + ローカル D1 で起動して API を叩くスモークテスト、gzip 3MB の size gate。`app`: 生成型が最新か、typecheck |
 | `android-apk.yml` (Android Build) | 手動 (`workflow_dispatch`) | input で `APP_NAME` / `ANDROID_PACKAGE` / `WEBAPP_URL` / `API_BASE_URL` / `PUSH_PROVIDER` などと成果物の種類 (`apk` / `aab` / `both`) を指定してビルドし Artifact に保存。Google Play の新規アプリは AAB 必須。Secrets に `ANDROID_KEYSTORE_BASE64` 等があれば release 署名、`GOOGLE_SERVICES_JSON_BASE64` があれば FCM 設定を同梱 |
 | `android-emulator.yml` | 手動 (`workflow_dispatch`) | KVM を有効化した ubuntu ランナーでエミュレータを起動し、release APK (x86_64) を入れて起動。ランナー上のバックエンド (`PUSH_PROVIDER=log`) と `examples/webapp` に `10.0.2.2` で接続し、スクリーンショットと logcat を Artifact に保存 |
 

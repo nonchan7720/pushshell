@@ -74,6 +74,19 @@ jobs:
           if [ -n "$deps" ]; then echo "::error::worker links heavy deps:"; echo "$deps"; exit 1; fi
       - name: Build worker wasm
         run: mise run worker:install && mise run worker:build
+      - name: Smoke test the built worker (wrangler dev + local D1)
+        # Runs build/app.wasm on the real Workers runtime (workerd) against a
+        # fresh local D1: applies the D1 migrations, then drives every API
+        # operation with curl (backend/worker/smoke.sh). PUSH_PROVIDER=log, so
+        # no outbound network is needed.
+        run: mise run worker:smoke
+      - name: Upload wrangler log
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: worker-smoke-wrangler-log
+          path: backend/worker/.wrangler/smoke/wrangler.log
+          if-no-files-found: ignore
       - name: "Size gate (Cloudflare Workers free plan, 3 MB gzip)"
         run: |
           raw=$(stat -c %s backend/worker/build/app.wasm)
