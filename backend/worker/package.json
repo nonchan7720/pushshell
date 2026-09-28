@@ -1,0 +1,16 @@
+{
+  "name": "webapp-notification-worker",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Cloudflare Workers + D1 deployment of ../cmd/worker (see backend/README.md \"Cloudflare Workers + D1 で動かす\")",
+  "scripts": {
+    "build": "./build.sh",
+    "dev": "npx wrangler dev --port 8787",
+    "deploy": "npm run build && npx wrangler deploy",
+    "migrate:local": "npx wrangler d1 migrations apply webapp-notification --local",
+    "migrate:remote": "npx wrangler d1 migrations apply webapp-notification --remote"
+  },
+  "devDependencies": {
+    "wrangler": "^4.143.0"
+  }
+}

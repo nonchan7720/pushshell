@@ -11,6 +11,7 @@ require (
 	github.com/oapi-codegen/nethttp-middleware v1.2.0
 	github.com/oapi-codegen/runtime v1.7.0
 	github.com/sideshow/apns2 v0.25.0
+	github.com/syumai/workers-go v0.36.0
 	golang.org/x/oauth2 v0.37.0
 	modernc.org/sqlite v1.59.0
 )

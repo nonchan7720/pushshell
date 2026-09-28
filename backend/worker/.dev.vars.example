@@ -1,0 +1,33 @@
+# backend/worker/.dev.vars.example
+#
+# `wrangler dev` reads secrets for local development from a `.dev.vars` file
+# in this directory (gitignored — copy this file to get started):
+#
+#   cp .dev.vars.example .dev.vars
+#
+# This is the local-dev equivalent of `wrangler secret put <NAME>` (which is
+# for deployed workers — see backend/README.md "Cloudflare Workers + D1 で
+# 動かす"). Anything non-secret (PUSH_PROVIDER, LOG_LEVEL) already has a
+# default in wrangler.toml's [vars] and does not need to be repeated here
+# unless you want to override it locally.
+
+# X-API-Key for POST /v1/notifications, DELETE /v1/logins/{loginId}, etc.
+API_KEY=dev
+
+# --- PUSH_PROVIDER=expo (wrangler.toml [vars] defaults to "log") ---
+# EXPO_ACCESS_TOKEN=
+
+# --- PUSH_PROVIDER=native: FCM (Android) ---
+# Note: unlike cmd/server there is no FCM_SERVICE_ACCOUNT_FILE on Workers
+# (no filesystem) — paste the service account JSON's contents directly.
+# FCM_SERVICE_ACCOUNT_JSON={"type":"service_account",...}
+# FCM_PROJECT_ID=
+
+# --- PUSH_PROVIDER=native: APNs (iOS) ---
+# Note: unlike cmd/server there is no APNS_KEY_FILE on Workers — paste the
+# .p8 file's contents (PEM) directly.
+# APNS_KEY=-----BEGIN PRIVATE KEY-----...
+# APNS_KEY_ID=
+# APNS_TEAM_ID=
+# APNS_TOPIC=
+# APNS_ENVIRONMENT=sandbox
