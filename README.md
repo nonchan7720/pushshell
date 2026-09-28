@@ -56,7 +56,31 @@ curl -X POST http://localhost:8080/v1/notifications \
   -d '{"loginIds":["user-1"],"title":"こんにちは","body":"新しいお知らせがあります","url":"https://example.com/inbox"}'
 ```
 
-## 別サービス用のアプリを作る
+## テンプレートとして使う
+
+このリポジトリは GitHub の Template repository です。自分のアプリを作るときは
+fork ではなく **「Use this template」** で新しいリポジトリを作ってください
+(履歴を引き継がず、private にもできます。fork は本リポジトリへの貢献用です)。
+
+作成後に差し替えるのは次の 4 か所だけです。コードの変更は要りません。
+
+1. **アプリの設定** (`app/.env`、`app/.env.example` からコピー): 下表の変数。
+   アイコン画像は `app/assets/` に置いて `APP_ICON` などで指す。
+2. **バックエンドの設定**: `backend/.env` (`backend/.env.example` から) の
+   `API_KEY` / `DB_*` / `PUSH_PROVIDER` と FCM / APNs の資格情報。
+   Cloudflare Workers で動かすなら `backend/worker/wrangler.toml` の
+   `database_id` と `wrangler secret put` (詳細は
+   [`backend/README.md`](backend/README.md))。
+3. **GitHub Actions の Secrets** (release ビルドを CI で作る場合):
+   `ANDROID_KEYSTORE_BASE64` / `ANDROID_KEYSTORE_PASSWORD` /
+   `ANDROID_KEY_ALIAS` / `ANDROID_KEY_PASSWORD`、FCM を使うなら
+   `GOOGLE_SERVICES_JSON_BASE64`。
+4. **識別子の置換** (任意): Go のモジュールパス
+   `github.com/nonchan7720/pushshell/backend` はモノレポ内でしか import
+   しないのでそのままでもビルド・動作しますが、自分の名前に揃えるなら
+   `pushshell` / `com.example.pushshell` / `nonchan7720/pushshell` を
+   一括置換して `mise run gen` を実行してください (ent の生成コードにも
+   モジュールパスが入っています)。
 
 `app/` はテンプレートです。`app/.env` (または EAS の環境変数) で次を差し替えるだけで
 別のアプリになります。詳細は [`app/README.md`](app/README.md)。
