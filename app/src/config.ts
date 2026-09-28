@@ -9,8 +9,12 @@ export interface AppExtra {
   allowedOrigins: string[];
   appVersion: string;
   pushProvider: PushProvider;
+  webviewAndroidLayerType?: WebViewLayerType;
   eas?: { projectId?: string };
 }
+
+/** Android WebView の描画レイヤー (react-native-webview の androidLayerType)。 */
+export type WebViewLayerType = "none" | "software" | "hardware";
 
 /** 通知の配送方式 (バックエンドの PUSH_PROVIDER と対応)。 */
 export type PushProvider = "expo" | "native";
@@ -33,6 +37,7 @@ export const config = {
   allowedOrigins: extra.allowedOrigins ?? [],
   appVersion: extra.appVersion ?? "1.0.0",
   pushProvider: (extra.pushProvider === "native" ? "native" : "expo") as PushProvider,
+  webviewAndroidLayerType: (extra.webviewAndroidLayerType ?? "none") as WebViewLayerType,
   // Expo Push Token の取得に必要な projectId。
   // extra.eas.projectId (app.config.ts 経由) か、EAS Build が埋め込む
   // Constants.easConfig のどちらかにある。

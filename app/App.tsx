@@ -335,6 +335,7 @@ export default function App() {
             source={{ uri: config.webappUrl }}
             style={styles.webview}
             originWhitelist={originWhitelist}
+            androidLayerType={config.webviewAndroidLayerType}
             injectedJavaScriptBeforeContentLoaded={beforeContentLoadedScript}
             onMessage={handleMessage}
             onNavigationStateChange={handleNavigationStateChange}

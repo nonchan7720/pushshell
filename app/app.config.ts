@@ -47,6 +47,13 @@ const API_BASE_URL = env("API_BASE_URL", "http://localhost:8080")!;
 // Expo Push Token の取得に必要 (未設定だと getExpoPushTokenAsync が失敗する)。
 const EAS_PROJECT_ID = env("EAS_PROJECT_ID");
 
+// Android WebView の描画レイヤー。none (既定, ハードウェア) / software / hardware。
+// GPU が無いエミュレータや一部端末で WebView がクラッシュする場合に software を指定する。
+const WEBVIEW_ANDROID_LAYER_TYPE = env("WEBVIEW_ANDROID_LAYER_TYPE", "none")!;
+if (!["none", "software", "hardware"].includes(WEBVIEW_ANDROID_LAYER_TYPE)) {
+  throw new Error(`WEBVIEW_ANDROID_LAYER_TYPE は none / software / hardware のいずれか (got: ${WEBVIEW_ANDROID_LAYER_TYPE})`);
+}
+
 // 通知の配送方式。バックエンドの PUSH_PROVIDER と揃える。
 //   expo:   Expo Push Token を登録する (EAS_PROJECT_ID が必要)
 //   native: FCM / APNs のネイティブトークンだけを登録する (Expo のプロジェクト不要)
@@ -148,6 +155,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     allowedOrigins: ALLOWED_ORIGINS,
     appVersion: APP_VERSION,
     pushProvider: PUSH_PROVIDER,
+    webviewAndroidLayerType: WEBVIEW_ANDROID_LAYER_TYPE,
     ...(EAS_PROJECT_ID ? { eas: { projectId: EAS_PROJECT_ID } } : {}),
   },
 });
