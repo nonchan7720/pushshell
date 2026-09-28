@@ -48,10 +48,26 @@ export async function registerDevice(
   return data;
 }
 
-/** 端末の登録を解除する (ログアウト時に呼ぶ)。存在しなくても成功扱い。 */
+/** 端末の登録を解除する (端末単位の全ログアウト時に呼ぶ。全 loginId の紐付けごと削除)。存在しなくても成功扱い。 */
 export async function unregisterDevice(installationId: string, token?: string): Promise<void> {
   const { error, response } = await client.DELETE("/v1/devices/{installationId}", {
     params: { path: { installationId } },
+    headers: authHeaders(token),
+  });
+  if (error) throw new ApiError(response.status, error);
+}
+
+/**
+ * 端末から特定の loginId の紐付けだけを外す (アカウント単位のログアウト時に呼ぶ)。
+ * 端末自体やその他の loginId の紐付けは残る。存在しなくても成功扱い。
+ */
+export async function unregisterDeviceLogin(
+  installationId: string,
+  loginId: string,
+  token?: string,
+): Promise<void> {
+  const { error, response } = await client.DELETE("/v1/devices/{installationId}/logins/{loginId}", {
+    params: { path: { installationId, loginId } },
     headers: authHeaders(token),
   });
   if (error) throw new ApiError(response.status, error);

@@ -116,17 +116,29 @@ eas build --platform ios --profile preview
 プロトコルの正式な定義とコメントは [`src/bridge.ts`](./src/bridge.ts) にあります。
 Web アプリ側の実装者はこのファイルだけ読めば連携できるはずです。要約:
 
+端末とログイン ID は多対多 (1 端末に複数アカウントがログインでき、1 アカウントは複数端末に
+登録されうる) です。ネイティブはこの端末に現在登録されているログイン ID の一覧を保持し、
+`ready` イベントの `loginIds` で Web アプリに伝えます。
+
 **Web → ネイティブ** (`window.ReactNativeWebView.postMessage(JSON.stringify(msg))`):
 
-- `{ type: "login", loginId, token? }` — ログイン時。ネイティブがバックエンドに端末を登録する
-- `{ type: "logout" }` — ログアウト時。ネイティブがバックエンドの登録を解除する
+- `{ type: "login", loginId, token? }` — ログイン時。ネイティブがバックエンドにこの loginId を
+  端末に紐付け登録する (`registered` が返る)
+- `{ type: "logout", loginId? }` — ログアウト時。
+  - `loginId` を指定: そのアカウントだけログアウトする (この端末の他のログイン中アカウントへの
+    通知は継続する)
+  - `loginId` を省略: 端末全体をログアウトする (この端末に紐付く全アカウント分の通知を止める)
+  - 成功すると `unregistered` が返る
 - `{ type: "openExternal", url }` — システムブラウザで URL を開く
 - `{ type: "getState" }` — 現在の状態を問い合わせる (`ready` が返る)
 
 **ネイティブ → Web** (`window.addEventListener("nativeapp", (e) => { e.detail })`):
 
-- `{ type: "ready", platform, appVersion, installationId, pushPermission }`
-- `{ type: "registered", loginId }` — 端末登録が成功した
+- `{ type: "ready", platform, appVersion, installationId, pushPermission, loginIds }` —
+  `loginIds` はこの端末に現在登録されているログイン ID の一覧 (未ログインなら空配列)
+- `{ type: "registered", loginId }` — 指定した loginId の端末登録が成功した
+- `{ type: "unregistered", loginId? }` — logout の処理が成功した (`loginId` は logout で
+  指定したものをそのまま返す。省略していれば端末全体のログアウト)
 - `{ type: "error", message }` — login/logout の処理が失敗した
 - `{ type: "notification", data }` — 通知がタップされた (`data.url` が許可 origin なら自動遷移もする)
 
@@ -134,17 +146,46 @@ Web アプリ側の実装者はこのファイルだけ読めば連携できる�
 注入されるので、Web アプリはこれの有無でネイティブアプリ内かどうかを判定できます。
 
 **動作確認用ページ**: [`examples/webapp/index.html`](../examples/webapp/index.html)
-(リポジトリルート) はビルド不要の静的 HTML で、login/logout/openExternal/getState を送信する
-ボタンと、受信した `nativeapp` イベントのログ表示があります。これを配信するサーバーの URL を
-`WEBAPP_URL` に設定して dev client で開けば、bridge の動作を手軽に確認できます。
+(リポジトリルート) はビルド不要の静的 HTML で、login/logout (loginId 指定 or 端末全体)/
+openExternal/getState を送信するボタンと、受信した `nativeapp` イベントのログ表示、
+`ready` イベントの `loginIds` の表示があります。これを配信するサーバーの URL を `WEBAPP_URL`
+に設定して dev client で開けば、bridge の動作を手軽に確認できます。
 
 ## 5. バックエンドの呼び出し
 
 `src/api/client.ts` が [`../openapi/openapi.yaml`](../openapi/openapi.yaml) から生成した型
-(`src/api/schema.d.ts`, `npm run gen:api` で再生成) を使って `POST /v1/devices` /
-`DELETE /v1/devices/{installationId}` を呼びます。`login` メッセージの `token` は、そのまま
-`Authorization: Bearer <token>` としてバックエンドに送られます
+(`src/api/schema.d.ts`, `npm run gen:api` で再生成) を使って以下を呼びます。`login` メッセージの
+`token` は、そのまま `Authorization: Bearer <token>` としてバックエンドに送られます
 (バックエンドの `Authorizer` 実装次第で検証されるかどうかが決まる。デフォルトは検証なし)。
+
+| 呼び出し | いつ | エンドポイント |
+|---|---|---|
+| `registerDevice` | `login` メッセージ受信時、起動時の resync、push token ローテーション時 | `POST /v1/devices` |
+| `unregisterDevice` | `logout` メッセージを `loginId` 省略で受信 (端末全体のログアウト) | `DELETE /v1/devices/{installationId}` |
+| `unregisterDeviceLogin` | `logout` メッセージを `loginId` 指定で受信 (アカウント単位のログアウト) | `DELETE /v1/devices/{installationId}/logins/{loginId}` |
+
+端末とログイン ID は多対多なので、`registerDevice` はこの端末に紐付くログイン ID を追加/更新
+するだけで他のログイン ID には影響しません。同様に `unregisterDeviceLogin` は指定した
+loginId の紐付けだけを外し、`unregisterDevice` は端末に紐付く全 loginId の紐付けを削除します。
+
+`DELETE /v1/logins/{loginId}` (`unregisterLogin`) はサーバー間 (API キー) 専用のエンドポイントで、
+**アプリからは呼びません**。あるログイン ID を全端末から一括で外したい場合に、Web アプリの
+バックエンドが直接呼び出すためのものです (次項も参照)。
+
+### セッション失効時の扱い
+
+Web アプリ側でセッションが失効した (例: API が 401 を返してログイン画面に戻した) 場合、
+そのアカウント宛の通知をこの端末で止めるには次のいずれかを行ってください。
+
+- Web アプリ (WebView 内の JS) が `{ type: "logout", loginId }` を bridge 経由で送る。
+  ネイティブが `DELETE /v1/devices/{installationId}/logins/{loginId}` を呼び、この端末からだけ
+  そのアカウントの紐付けを外す。
+- あるいは Web アプリのバックエンドが API キーで直接、次のどちらかを呼ぶ。
+  - `DELETE /v1/logins/{loginId}` — そのログイン ID を全端末から一括で外す
+    (全端末ログアウト、退会時など)
+  - `DELETE /v1/devices/{installationId}/logins/{loginId}` — 特定の端末だけから外す。
+    `installationId` は `ready` イベントで Web アプリに渡っているので、これをバックエンドに
+    保存しておけば利用できる。
 
 端末登録に使う値の組み立ては [`src/notifications.ts`](./src/notifications.ts)
 (`buildDeviceRegistration`) を参照してください。

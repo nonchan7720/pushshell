@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"entgo.io/ent"
+	"entgo.io/ent/dialect/entsql"
 	"entgo.io/ent/schema/edge"
 	"entgo.io/ent/schema/field"
 	"entgo.io/ent/schema/index"
@@ -53,7 +54,8 @@ func (Device) Fields() []ent.Field {
 // Edges of the Device.
 func (Device) Edges() []ent.Edge {
 	return []ent.Edge{
-		edge.To("logins", DeviceLogin.Type),
+		edge.To("logins", DeviceLogin.Type).
+			Annotations(entsql.OnDelete(entsql.Cascade)),
 	}
 }
 

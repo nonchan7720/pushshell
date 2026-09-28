@@ -107,6 +107,7 @@
     <h2>window.NativeApp</h2>
     <div id="nativeAppStatus" class="status"><span class="dot off"></span><span>確認中...</span></div>
     <p class="kv" id="nativeAppDetail"></p>
+    <p class="kv" id="loginIdsDetail"><b>loginIds:</b> (ready イベント未受信)</p>
   </section>
 
   <section>
@@ -117,8 +118,13 @@
     <input type="text" id="token" placeholder="任意の bearer トークン" />
     <div class="row">
       <button id="loginBtn">login を送信</button>
-      <button class="secondary" id="logoutBtn">logout を送信</button>
+      <button class="secondary" id="logoutBtn">logout を送信 (上の loginId のみ)</button>
+      <button class="secondary" id="logoutAllBtn">logout を送信 (端末全体)</button>
     </div>
+    <p class="kv">
+      「logout を送信 (上の loginId のみ)」は loginId 欄が空だと使えません
+      (その場合は端末全体ボタンを使ってください)。
+    </p>
   </section>
 
   <section>
@@ -164,9 +170,16 @@
       statusEl.innerHTML = '<span class="dot off"></span><span>通常のブラウザで実行中 (window.NativeApp なし)</span>';
     }
 
-    // ネイティブ → Web イベントをすべてログに出す。
+    // ネイティブ → Web イベントをすべてログに出す。ready イベントは loginIds も状態表示に反映する。
+    const loginIdsDetailEl = document.getElementById("loginIdsDetail");
     window.addEventListener("nativeapp", (event) => {
       log("← nativeapp", event.detail);
+      if (event.detail && event.detail.type === "ready") {
+        const loginIds = event.detail.loginIds || [];
+        loginIdsDetailEl.innerHTML = loginIds.length
+          ? `<b>loginIds:</b> ${loginIds.join(", ")}`
+          : "<b>loginIds:</b> (なし・未ログイン)";
+      }
     });
 
     document.getElementById("loginBtn").addEventListener("click", () => {
@@ -180,6 +193,15 @@
     });
 
     document.getElementById("logoutBtn").addEventListener("click", () => {
+      const loginId = document.getElementById("loginId").value.trim();
+      if (!loginId) {
+        log("! error", { message: "loginId を入力してください (端末全体をログアウトするには右のボタンを使ってください)" });
+        return;
+      }
+      post({ type: "logout", loginId });
+    });
+
+    document.getElementById("logoutAllBtn").addEventListener("click", () => {
       post({ type: "logout" });
     });
 

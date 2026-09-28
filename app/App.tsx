@@ -21,7 +21,7 @@ import type {
   WebViewNavigation,
 } from "react-native-webview/lib/WebViewTypes";
 
-import { ApiError, registerDevice, unregisterDevice } from "./src/api/client";
+import { ApiError, registerDevice, unregisterDevice, unregisterDeviceLogin } from "./src/api/client";
 import {
   injectNativeEvent,
   injectedBeforeContentLoaded,
@@ -31,17 +31,19 @@ import {
 import type { PushPermissionStatus } from "./src/bridge";
 import { config } from "./src/config";
 import {
-  clearLoginState,
+  clearLogins,
   getInstallationId,
-  loadLoginState,
-  saveLoginState,
-  type StoredLoginState,
+  loadLogins,
+  removeLogin,
+  upsertLogin,
+  type StoredLogin,
 } from "./src/installation";
 import {
   buildDeviceRegistration,
   ensurePushPermission,
   getCurrentPushPermission,
   getPushTokens,
+  type PushTokens,
 } from "./src/notifications";
 import { useNotificationNavigation } from "./src/useNotificationNavigation";
 
@@ -55,28 +57,28 @@ const platform: "ios" | "android" = Platform.OS === "ios" ? "ios" : "android";
 export default function App() {
   const webViewRef = useRef<WebView>(null);
   const [installationId, setInstallationId] = useState<string | null>(null);
-  const [loginState, setLoginState] = useState<StoredLoginState | null>(null);
+  const [logins, setLogins] = useState<StoredLogin[]>([]);
   const [loading, setLoading] = useState(true);
   const [canGoBack, setCanGoBack] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const [needsResync, setNeedsResync] = useState(false);
 
-  // login/logout 処理中に最新の loginState を読みたいので ref にも保持する。
-  const loginStateRef = useRef<StoredLoginState | null>(null);
-  loginStateRef.current = loginState;
+  // login/logout 処理中に最新の logins を読みたいので ref にも保持する。
+  const loginsRef = useRef<StoredLogin[]>([]);
+  loginsRef.current = logins;
 
   useNotificationNavigation(webViewRef);
 
-  // 初期化: installationId の確保、前回ログイン状態の復元。
+  // 初期化: installationId の確保、前回ログイン状態 (複数アカウント分) の復元。
   useEffect(() => {
     (async () => {
       const id = await getInstallationId();
       setInstallationId(id);
-      const stored = await loadLoginState();
-      if (stored) {
-        setLoginState(stored);
-        loginStateRef.current = stored;
+      const stored = await loadLogins();
+      if (stored.length > 0) {
+        setLogins(stored);
+        loginsRef.current = stored;
         setNeedsResync(true);
       }
     })();
@@ -108,86 +110,138 @@ export default function App() {
       appVersion: config.appVersion,
       installationId,
       pushPermission,
+      loginIds: loginsRef.current.map((login) => login.loginId),
     });
   }, [installationId, sendToWeb]);
 
+  // 通知権限を確認し、配送方式 (config.pushProvider) に必要な push token を取得する。
+  // 権限が無い/トークンが取れない場合は例外を投げる。
+  const acquirePushToken = useCallback(async (): Promise<PushTokens> => {
+    const permission: PushPermissionStatus = await ensurePushPermission();
+    const tokens = await getPushTokens();
+    const token = config.pushProvider === "native" ? tokens.devicePushToken : tokens.expoPushToken;
+    if (permission !== "granted" || !token) {
+      throw new Error(
+        `プッシュ通知の権限またはトークンが取得できません (permission=${permission}, provider=${config.pushProvider})`,
+      );
+    }
+    return tokens;
+  }, []);
+
+  // 1 アカウント分の DeviceRegistration を組み立ててバックエンドに登録し、保存/通知まで行う。
+  const registerLogin = useCallback(
+    async (loginId: string, token: string | undefined, installId: string, tokens: PushTokens) => {
+      const registration = buildDeviceRegistration({
+        loginId,
+        installationId: installId,
+        expoPushToken: tokens.expoPushToken,
+        devicePushToken: tokens.devicePushToken,
+      });
+      await registerDevice(registration, token);
+
+      const next = await upsertLogin({ loginId, token });
+      setLogins(next);
+      loginsRef.current = next;
+      sendToWeb({ type: "registered", loginId });
+    },
+    [sendToWeb],
+  );
+
+  // `login` メッセージ (Web アプリからの単一アカウントのログイン) を処理する。
   const registerWithBackend = useCallback(
     async (loginId: string, token: string | undefined) => {
       // state の installationId がまだ無ければ (起動直後) SecureStore から直接取る。
       const id = installationId ?? (await getInstallationId());
       try {
-        const permission: PushPermissionStatus = await ensurePushPermission();
-        const tokens = await getPushTokens();
-
-        // 配送方式ごとに必要なトークンが揃っているか確認する。
-        const token =
-          config.pushProvider === "native" ? tokens.devicePushToken : tokens.expoPushToken;
-        if (permission !== "granted" || !token) {
-          throw new Error(
-            `プッシュ通知の権限またはトークンが取得できません (permission=${permission}, provider=${config.pushProvider})`,
-          );
-        }
-
-        const registration = buildDeviceRegistration({
-          loginId,
-          installationId: id,
-          expoPushToken: tokens.expoPushToken,
-          devicePushToken: tokens.devicePushToken,
-        });
-        await registerDevice(registration, token);
-
-        const state: StoredLoginState = { loginId, token };
-        await saveLoginState(state);
-        setLoginState(state);
-        loginStateRef.current = state;
-        sendToWeb({ type: "registered", loginId });
+        const tokens = await acquirePushToken();
+        await registerLogin(loginId, token, id, tokens);
       } catch (error) {
         console.warn("[App] registerWithBackend に失敗しました:", error);
         const message = error instanceof ApiError ? error.message : String(error);
         sendToWeb({ type: "error", message });
       }
     },
-    [installationId, sendToWeb],
+    [installationId, acquirePushToken, registerLogin, sendToWeb],
   );
+
+  // 保存済みの全ログインを順番に再登録する (起動時の resync、push token ローテーション時に使う)。
+  // 1 件失敗しても残りは続行し、失敗があった場合にまとめて 1 回だけ error を送る。
+  const resyncLogins = useCallback(async () => {
+    const stored = loginsRef.current;
+    if (stored.length === 0) return;
+    const id = installationId ?? (await getInstallationId());
+
+    let tokens: PushTokens;
+    try {
+      tokens = await acquirePushToken();
+    } catch (error) {
+      console.warn("[App] resyncLogins: push token の取得に失敗しました:", error);
+      const message = error instanceof ApiError ? error.message : String(error);
+      sendToWeb({ type: "error", message });
+      return;
+    }
+
+    let hasError = false;
+    for (const login of stored) {
+      try {
+        await registerLogin(login.loginId, login.token, id, tokens);
+      } catch (error) {
+        hasError = true;
+        console.warn(`[App] resyncLogins (${login.loginId}) に失敗しました:`, error);
+      }
+    }
+    if (hasError) {
+      sendToWeb({ type: "error", message: "一部のログインの再登録に失敗しました。" });
+    }
+  }, [installationId, acquirePushToken, registerLogin, sendToWeb]);
 
   // 前回ログインしたままなら起動時に一度だけ再登録する。
   // アプリ停止中に push token がローテーションしていても、これでバックエンド側が最新になる。
   useEffect(() => {
     if (!needsResync || !installationId) return;
     setNeedsResync(false);
-    const current = loginStateRef.current;
-    if (current) {
-      registerWithBackend(current.loginId, current.token);
-    }
-  }, [needsResync, installationId, registerWithBackend]);
+    resyncLogins();
+  }, [needsResync, installationId, resyncLogins]);
 
-  // device push token がローテーションしたら Expo Push Token も取り直して再登録する
-  // (ログイン中のみ)。addPushTokenListener が返すのはネイティブの device push token。
+  // device push token がローテーションしたら Expo Push Token も取り直して、保存済みの
+  // 全ログインを再登録する。addPushTokenListener が返すのはネイティブの device push token。
   useEffect(() => {
     const subscription = Notifications.addPushTokenListener(() => {
-      const current = loginStateRef.current;
-      if (!current) return;
-      registerWithBackend(current.loginId, current.token);
+      resyncLogins();
     });
     return () => subscription.remove();
-  }, [registerWithBackend]);
+  }, [resyncLogins]);
 
-  const handleLogout = useCallback(async () => {
-    const current = loginStateRef.current;
-    const id = installationId ?? (await getInstallationId());
-    try {
-      if (current) {
-        await unregisterDevice(id, current.token);
+  // `logout` メッセージを処理する。loginId 指定ありならそのアカウントだけ、無ければ端末全体を
+  // ログアウトする。
+  const handleLogout = useCallback(
+    async (loginId: string | undefined) => {
+      const id = installationId ?? (await getInstallationId());
+      try {
+        if (loginId) {
+          const current = loginsRef.current.find((login) => login.loginId === loginId);
+          await unregisterDeviceLogin(id, loginId, current?.token);
+          const next = await removeLogin(loginId);
+          setLogins(next);
+          loginsRef.current = next;
+        } else {
+          // 端末単位の全ログアウト。認証ヘッダーには保存済みログインのいずれかの token を使う
+          // (デフォルトの Authorizer はトークンを検証しないため、どれを使っても動作する)。
+          const token = loginsRef.current[0]?.token;
+          await unregisterDevice(id, token);
+          await clearLogins();
+          setLogins([]);
+          loginsRef.current = [];
+        }
+        sendToWeb({ type: "unregistered", loginId });
+      } catch (error) {
+        console.warn("[App] logout に失敗しました:", error);
+        const message = error instanceof ApiError ? error.message : String(error);
+        sendToWeb({ type: "error", message });
       }
-      await clearLoginState();
-      setLoginState(null);
-      loginStateRef.current = null;
-    } catch (error) {
-      console.warn("[App] logout に失敗しました:", error);
-      const message = error instanceof ApiError ? error.message : String(error);
-      sendToWeb({ type: "error", message });
-    }
-  }, [installationId, sendToWeb]);
+    },
+    [installationId, sendToWeb],
+  );
 
   const handleMessage = useCallback(
     (event: WebViewMessageEvent) => {
@@ -206,7 +260,7 @@ export default function App() {
           registerWithBackend(message.loginId, message.token);
           break;
         case "logout":
-          handleLogout();
+          handleLogout(message.loginId);
           break;
         case "openExternal":
           Linking.openURL(message.url).catch((error) => {

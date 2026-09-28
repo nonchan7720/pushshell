@@ -54,7 +54,7 @@ var (
 				Symbol:     "device_logins_devices_logins",
 				Columns:    []*schema.Column{DeviceLoginsColumns[3]},
 				RefColumns: []*schema.Column{DevicesColumns[0]},
-				OnDelete:   schema.NoAction,
+				OnDelete:   schema.Cascade,
 			},
 		},
 		Indexes: []*schema.Index{
