@@ -56,12 +56,9 @@ func run() error {
 		}
 	}
 
-	var sender push.Sender
-	switch cfg.PushProvider {
-	case "log":
-		sender = push.LogSender{Logger: logger}
-	default:
-		sender = &push.ExpoSender{AccessToken: cfg.ExpoAccessToken}
+	sender, err := buildSender(cfg, logger)
+	if err != nil {
+		return err
 	}
 
 	h := handler.New(client, sender, handler.AllowAll{}, logger)

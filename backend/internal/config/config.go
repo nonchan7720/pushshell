@@ -36,10 +36,34 @@ type Config struct {
 	// APIKey は /v1/notifications など server-to-server API の保護に使う。
 	// 空の場合は API キー必須のエンドポイントは 401 を返す。
 	APIKey string
-	// PushProvider は expo | log。
+	// PushProvider は expo | native | log。
 	PushProvider string
 	// ExpoAccessToken は Expo Push API のアクセストークン (任意)。
 	ExpoAccessToken string
+
+	// --- PUSH_PROVIDER=native (FCM / APNs) ---
+
+	// FCMServiceAccountFile は FCM HTTP v1 用の Google サービスアカウント
+	// JSON ファイルのパス (Firebase コンソール → プロジェクトの設定 →
+	// サービスアカウント → 新しい秘密鍵の生成)。
+	FCMServiceAccountFile string
+	// FCMServiceAccountJSON は上記 JSON の中身を直接渡す場合 (どちらか一方)。
+	FCMServiceAccountJSON string
+	// FCMProjectID は省略時サービスアカウント JSON の project_id を使う。
+	FCMProjectID string
+
+	// APNSKeyFile は APNs 用 .p8 Auth Key ファイルのパス。
+	APNSKeyFile string
+	// APNSKey は上記 .p8 の中身 (PEM) を直接渡す場合 (どちらか一方)。
+	APNSKey string
+	// APNSKeyID は .p8 に対応する Key ID (Apple Developer の Keys ページ)。
+	APNSKeyID string
+	// APNSTeamID は Apple Developer の Team ID。
+	APNSTeamID string
+	// APNSTopic は apns-topic ヘッダに使う値 (通常はアプリのバンドル ID)。
+	APNSTopic string
+	// APNSEnvironment は sandbox | production (既定 production)。
+	APNSEnvironment string
 	// ShutdownTimeout は graceful shutdown の待ち時間。
 	ShutdownTimeout time.Duration
 	// LogLevel は debug | info | warn | error。
@@ -56,6 +80,18 @@ func Load() (Config, error) {
 		APIKey:          os.Getenv("API_KEY"),
 		PushProvider:    strings.ToLower(getenv("PUSH_PROVIDER", "expo")),
 		ExpoAccessToken: os.Getenv("EXPO_ACCESS_TOKEN"),
+
+		FCMServiceAccountFile: os.Getenv("FCM_SERVICE_ACCOUNT_FILE"),
+		FCMServiceAccountJSON: os.Getenv("FCM_SERVICE_ACCOUNT_JSON"),
+		FCMProjectID:          os.Getenv("FCM_PROJECT_ID"),
+
+		APNSKeyFile:     os.Getenv("APNS_KEY_FILE"),
+		APNSKey:         os.Getenv("APNS_KEY"),
+		APNSKeyID:       os.Getenv("APNS_KEY_ID"),
+		APNSTeamID:      os.Getenv("APNS_TEAM_ID"),
+		APNSTopic:       os.Getenv("APNS_TOPIC"),
+		APNSEnvironment: strings.ToLower(getenv("APNS_ENVIRONMENT", "production")),
+
 		ShutdownTimeout: getenvDuration("SHUTDOWN_TIMEOUT", 10*time.Second),
 		LogLevel:        strings.ToLower(getenv("LOG_LEVEL", "info")),
 	}
@@ -65,9 +101,14 @@ func Load() (Config, error) {
 		return c, fmt.Errorf("config: unsupported DB_DIALECT %q (sqlite|mysql|postgres)", c.DBDialect)
 	}
 	switch c.PushProvider {
-	case "expo", "log":
+	case "expo", "native", "log":
 	default:
-		return c, fmt.Errorf("config: unsupported PUSH_PROVIDER %q (expo|log)", c.PushProvider)
+		return c, fmt.Errorf("config: unsupported PUSH_PROVIDER %q (expo|native|log)", c.PushProvider)
+	}
+	switch c.APNSEnvironment {
+	case "sandbox", "production":
+	default:
+		return c, fmt.Errorf("config: unsupported APNS_ENVIRONMENT %q (sandbox|production)", c.APNSEnvironment)
 	}
 	return c, nil
 }
