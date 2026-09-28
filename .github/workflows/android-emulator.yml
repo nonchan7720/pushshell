@@ -7,6 +7,11 @@ name: Android Emulator
 # push token の取得 (FCM) は資格情報が必要なので対象外。
 
 on:
+  # ワークフロー自身やスモークテストのスクリプトを変更した push で 1 回走らせて自己検証する
+  push:
+    paths:
+      - ".github/workflows/android-emulator.yml"
+      - "scripts/android/emulator-smoke.sh"
   workflow_dispatch:
     inputs:
       api_level:
@@ -35,7 +40,7 @@ jobs:
       architectures: x86_64
 
   emulator:
-    name: run on emulator (API ${{ inputs.api_level }})
+    name: run on emulator (API ${{ inputs.api_level || '36' }})
     needs: apk
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -77,14 +82,14 @@ jobs:
           path: |
             ~/.android/avd/*
             ~/.android/adb*
-          key: avd-${{ inputs.api_level }}-${{ inputs.system_image_tag }}-x86_64
+          key: avd-${{ inputs.api_level || '36' }}-${{ inputs.system_image_tag || 'default' }}-x86_64
 
       - name: Create AVD snapshot
         if: steps.avd-cache.outputs.cache-hit != 'true'
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
         with:
-          api-level: ${{ inputs.api_level }}
-          target: ${{ inputs.system_image_tag }}
+          api-level: ${{ inputs.api_level || '36' }}
+          target: ${{ inputs.system_image_tag || 'default' }}
           arch: x86_64
           profile: pixel_7
           force-avd-creation: false
@@ -95,8 +100,8 @@ jobs:
       - name: Run smoke test on emulator
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
         with:
-          api-level: ${{ inputs.api_level }}
-          target: ${{ inputs.system_image_tag }}
+          api-level: ${{ inputs.api_level || '36' }}
+          target: ${{ inputs.system_image_tag || 'default' }}
           arch: x86_64
           profile: pixel_7
           force-avd-creation: false
