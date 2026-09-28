@@ -8,11 +8,13 @@ WebView + プッシュ通知アプリ向けの通知バックエンド。Go 製�
 ```
 backend/
 ├── cmd/
-│   ├── server/           # サーバー本体 (main)
+│   ├── server/           # サーバー本体 (main)。net/http + sqlite/mysql/postgres
+│   ├── worker/           # Cloudflare Workers + D1 向け entrypoint (js/wasm 専用。後述)
 │   └── migrate/          # migration ファイル生成 CLI (ent + Atlas を Go ライブラリとして呼ぶ)
 ├── internal/
+│   ├── app/                # cmd/server・cmd/worker 共通の組み立て (push.Sender / logger)
 │   ├── config/            # 環境変数 → Config
-│   ├── db/                # dialect ごとに ent.Client を開く
+│   ├── db/                # dialect ごとに ent.Client を開く (cmd/server 専用。cmd/worker は D1 を直接開く)
 │   ├── ent/                # ent (生成コード)。スキーマは internal/ent/schema/{device,device_login}.go
 │   ├── api/                # oapi-codegen 生成コード (../openapi/openapi.yaml から)
 │   ├── handler/            # api.StrictServerInterface の実装 (ビジネスロジック)
@@ -22,9 +24,18 @@ backend/
 │   ├── sqlite/             # versioned migration (.sql + atlas.sum)
 │   ├── mysql/
 │   └── postgres/
+├── worker/                  # cmd/worker を Cloudflare Workers + D1 にデプロイする wrangler プロジェクト (後述)
 ├── atlas.hcl                # atlas CLI 用の env 定義 (apply / status / validate 用)
 └── .env.example
 ```
+
+`cmd/server` (net/http + sqlite/mysql/postgres、通常のデプロイ先) と
+`cmd/worker` (Cloudflare Workers + D1) はどちらも `internal/handler` /
+`internal/server` / `internal/push` / `internal/api` / `internal/ent` を
+まったく同じコードで使う (フォークしていない)。両者が異なるのは DB の
+開き方 (`internal/db.Open` vs D1) と `push.Sender` の組み立て方の
+入口 (`internal/app.BuildSender` は共通) だけ。詳細は
+「[Cloudflare Workers + D1 で動かす](#cloudflare-workers--d1-で動かす)」を参照。
 
 データモデルは `Device` と `DeviceLogin` の 2 テーブル
 (`internal/ent/schema/device.go`, `internal/ent/schema/device_login.go`)。
@@ -331,11 +342,248 @@ curl -X DELETE localhost:8080/v1/logins/u1 -H 'X-API-Key: dev'
   `Message.Platform` で振り分ける `push.NativeSender` (`native.go`) を持つ。
   独自のバックエンドに送りたい場合やテストで送信を記録したい場合は
   `Sender` を実装して `handler.New(..., sender, ...)` に渡す
-  (`push.LogSender` は開発用の実装例)。`cmd/server/main.go` の
-  `buildSender` が `PUSH_PROVIDER` (`expo`/`native`/`log`) に応じて組み立てる。
+  (`push.LogSender` は開発用の実装例)。`internal/app.BuildSender`
+  (`internal/app/sender.go`。`cmd/server`・`cmd/worker` 共通) が
+  `PUSH_PROVIDER` (`expo`/`native`/`log`) に応じて組み立てる。
 - **`handler.Authorizer`** (`internal/handler/auth.go`): 端末登録・解除の
   認可。既定の `handler.AllowAll` は何も検証しない。Web アプリのセッション
   Cookie/JWT などを検証したい場合は `AuthorizeDevice(ctx, loginID, token
   string) error` を実装し、`handler.New(db, sender, myAuthorizer, logger)`
   に渡す。`token` は `Authorization: Bearer <token>` から取り出した値
   (`handler.BearerFromRequest` / `handler.WithBearer`)。
+
+## Cloudflare Workers + D1 で動かす
+
+`cmd/server` と全く同じ `internal/handler` / `internal/server` /
+`internal/push` / `internal/api` / `internal/ent` を、`cmd/worker`
+(`//go:build js && wasm`) から Cloudflare Workers + D1 の上で動かせる。
+ビジネスロジックは 1 つも fork していない — 差分は「DB の開き方」
+(`internal/db.Open` の代わりに D1 を `database/sql` 越しに直接開く) と
+「エントリポイント」(`net/http.Server` の代わりに
+[`github.com/syumai/workers-go`](https://pkg.go.dev/github.com/syumai/workers-go)
+の `workers.Serve`) だけ。
+
+### アーキテクチャ
+
+```
+backend/worker/                  # wrangler プロジェクト (npm)
+├── wrangler.toml                 # name / D1 binding / [vars]
+├── package.json                  # wrangler (devDependency) + npm scripts
+├── build.sh                      # ../cmd/worker を wasm にビルド → build/
+├── sync-migrations.sh            # ../migrations/sqlite/*.sql → migrations/NNNN_*.sql
+├── migrations/                   # wrangler d1 migrations 用 (コミット済み)
+├── .dev.vars.example             # `wrangler dev` のローカル secrets のひな形
+└── build/                        # build.sh の生成物 (gitignore。worker.mjs / app.wasm)
+
+backend/cmd/worker/
+├── doc.go     (!(js && wasm))    # go build ./... が全 GOOS で通るためのスタブ main
+├── main.go    (js && wasm)       # 本体: config.Load → D1 open → handler.New → server.New → workers.Serve
+└── d1time.go  (js && wasm)       # D1 ドライバの time.Time 対応 (後述)
+```
+
+`go run github.com/syumai/workers-go/cmd/workers-assets-gen -mode=go
+-runtime=cloudflare` が `build/worker.mjs` (Workers の fetch イベントを
+wasm に転送する JS グルー) と `wasm_exec.js` を生成し、続けて
+`GOOS=js GOARCH=wasm go build -o build/app.wasm ./cmd/worker` で本体を wasm
+にビルドする (`backend/worker/build.sh`、`mise run worker:build`)。Workers
+はリクエストごとに wasm インスタンスを新規生成して `main()` を実行する
+(`workers-go` の `worker.mjs` テンプレートの仕様。グローバル状態はリクエスト
+間で共有されない) ため、`cmd/worker/main.go` は D1 接続や push.Sender の
+組み立てを含め `cmd/server` の `run()` 相当を毎リクエスト実行する。
+
+### D1 まわりの既知の制約と対応
+
+- **DB_AUTO_MIGRATE は使えない**: `cmd/worker` はスキーマの自動作成をしない。
+  D1 のスキーマは `wrangler d1 migrations` (`backend/worker/migrations/`、
+  下記) で管理する。
+- **D1 に対話的トランザクションはない**
+  (`d1.Conn.BeginTx` は常にエラーを返す)。`internal/handler` はそもそも
+  `client.Tx(ctx)` を呼んでいないので、このバックエンドにとっては実害がない。
+- **`time.Time` の変換が必要**: D1 ドライバ
+  (`github.com/syumai/workers-go/cloudflare/d1`) はクエリ引数を
+  `syscall/js.Value.Call` でそのまま JS に渡すが、`js.ValueOf` は
+  `time.Time` (ent の `created_at`/`updated_at`、`internal/ent/schema` の
+  `field.Time`) を扱えず、`mise run worker:dev` + `POST /v1/devices` で
+  実際に `panic: ValueOf: invalid value` になることを確認した。
+  `backend/cmd/worker/d1time.go` が `driver.NamedValueChecker`
+  (書き込み時: `time.Time` → RFC3339Nano 文字列) と `driver.Rows` の
+  ラッパー (読み込み時: 文字列 → `time.Time`) を挟んで対応している。
+  `internal/ent` 側は無変更。
+- **サイズ上限**: `mise run worker:build` が実行時に表示する通り、
+  `app.wasm` は **約 37MB (raw) / 約 8.2MB (gzip)**。Cloudflare Workers の
+  デプロイ上限は無料プランが **3MB (gzip 後)**、有料 (Workers Paid) プランが
+  **10MB (gzip 後)**。したがってこの実装は **Workers Paid プランが必須**
+  (無料プランでは `wrangler deploy` が上限超過で失敗する)。kin-openapi
+  (OpenAPI バリデーション) / ent / apns2 / golang.org/x/oauth2 など依存が
+  多く、これは Go (TinyGo ではない) wasm バイナリとしては妥当なサイズ。
+  さらに縮めたい場合は TinyGo への移植が考えられるが、`golang.org/x/net/http2`
+  や `reflect` を多用する依存 (kin-openapi, ent) との相性次第で別途検証が
+  必要 (未検証)。
+
+### 環境変数のマッピング
+
+`cmd/worker` は `internal/config.Load()` を無改造で使う (環境変数は
+`os.Getenv` で読む)。Workers ランタイムの `env` オブジェクト
+(`wrangler.toml` の `[vars]` / `wrangler secret put` / ローカルの
+`.dev.vars`) には `cloudflare.Getenv` でしかアクセスできないので、
+`cmd/worker/main.go` の起動時に次の環境変数だけを `os.Setenv` へコピーする
+(`workerEnvKeys`)。それ以外の `internal/config` の変数は Workers 上では
+意味を持たない (下表)。
+
+| `internal/config` の変数 | Workers 上での扱い |
+|---|---|
+| `API_KEY` | コピーされる。`wrangler secret put API_KEY` (本番) / `.dev.vars` (ローカル) |
+| `PUSH_PROVIDER` | コピーされる。既定は `wrangler.toml` の `[vars]` で `log` |
+| `EXPO_ACCESS_TOKEN` | コピーされる (`wrangler secret put`) |
+| `FCM_SERVICE_ACCOUNT_JSON` | コピーされる (`wrangler secret put`。中身をそのまま) |
+| `FCM_SERVICE_ACCOUNT_FILE` | **使えない** (Workers にファイルシステムはない)。`FCM_SERVICE_ACCOUNT_JSON` を使う |
+| `FCM_PROJECT_ID` | コピーされる |
+| `APNS_KEY` | コピーされる (`wrangler secret put`。`.p8` の中身をそのまま) |
+| `APNS_KEY_FILE` | **使えない**。`APNS_KEY` を使う |
+| `APNS_KEY_ID` / `APNS_TEAM_ID` / `APNS_TOPIC` / `APNS_ENVIRONMENT` | コピーされる |
+| `LOG_LEVEL` | コピーされる。既定は `wrangler.toml` の `[vars]` で `info` |
+| `ADDR` / `SHUTDOWN_TIMEOUT` | コピーされない (Workers はリスンしない。`net/http.Server` を使わない) |
+| `DB_DIALECT` / `DB_DSN` / `DB_AUTO_MIGRATE` | コピーされない (D1 を `[[d1_databases]]` binding 経由で直接開く。スキーマは `wrangler d1 migrations` で管理) |
+
+APNs は wasm ビルドでは `apns2` の HTTP/2 直結トランスポートの代わりに
+`github.com/syumai/workers-go/cloudflare/fetch` 経由の `*http.Client` を使う
+(`internal/push/httpclient_js.go`)。Expo/FCM も同様 — 詳細は次項。
+
+### push.Sender と fetch (重要な実装上の注意)
+
+タスクの前提「Go の `net/http` クライアントは js/wasm では JS の `fetch`
+API を使うので、Expo/FCM/APNs はそのまま動くはず」は **実機の Cloudflare
+Workers ランタイム (workerd, `wrangler dev` で確認) では成り立たなかった**。
+Go 標準の `net/http/roundtrip_js.go` は `fetch(url, options)` の 2 引数形式
+で `globalThis.fetch` を呼ぶが、workerd はこれを
+`JavaScript error: Illegal invocation` で拒否する (`PUSH_PROVIDER=expo` +
+ダミーの `ExponentPushToken[x]` で `POST /v1/notifications` を叩いて実際に
+再現・確認した)。`github.com/syumai/workers-go/cloudflare/fetch`
+(このライブラリ自身の D1/KV/R2 バインディングが内部で使っているのと同じ
+パッケージ) は `Request` オブジェクトを組み立てて `fetch(request, init)`
+の形で呼ぶため、これは workerd が受け付ける。そこで
+`internal/push/httpclient_js.go` (`//go:build js && wasm`。`_default.go`
+側は非 wasm では nil を返す no-op) が `wasmTransport()` として
+`cloudflare/fetch` ベースの `http.RoundTripper` を提供し、
+
+- `push.ExpoSender.sendBatch` (`expo.go`)
+- `push.FCMSender.sendOne` (`fcm.go`。送信自体だけでなく、
+  `NewFCMSender` が作る OAuth2 トークン取得の HTTP 呼び出しにも
+  `oauth2.HTTPClient` context 経由で同じ fix を適用している — ここを
+  見落とすとトークン取得自体が同じエラーで失敗する)
+- `push.APNSSender` (`apns.go`。`apns2.NewTokenClient` の
+  `http2.Transport` を差し替え)
+
+の 3 箇所すべてで使っている。`internal/push` の公開 API・cmd/server 側の
+挙動は変わらない (`wasmTransport()` は非 wasm ビルドでは常に `nil` を返し、
+各 Sender は今まで通り `http.DefaultTransport` を使う)。
+
+### セットアップ
+
+```sh
+# 1. wrangler など npm 依存をインストール
+mise run worker:install
+
+# 2. D1 データベースを作成 (初回のみ。表示される database_id を
+#    backend/worker/wrangler.toml の [[d1_databases]] database_id に貼る)
+cd backend/worker && npx wrangler login && npx wrangler d1 create webapp-notification
+cd ../..
+
+# 3. secrets (本番)。PUSH_PROVIDER=log 以外を使うなら必要な分だけ
+cd backend/worker
+npx wrangler secret put API_KEY
+# PUSH_PROVIDER=expo なら (任意): npx wrangler secret put EXPO_ACCESS_TOKEN
+# PUSH_PROVIDER=native なら (FCM/APNs いずれか、または両方):
+#   npx wrangler secret put FCM_SERVICE_ACCOUNT_JSON
+#   npx wrangler secret put FCM_PROJECT_ID
+#   npx wrangler secret put APNS_KEY
+#   npx wrangler secret put APNS_KEY_ID
+#   npx wrangler secret put APNS_TEAM_ID
+#   npx wrangler secret put APNS_TOPIC
+#   npx wrangler secret put APNS_ENVIRONMENT
+cd ../..
+
+# 4. PUSH_PROVIDER=native (Expo Push を使わない) にする場合、非秘密値は
+#    wrangler.toml の [vars] を編集 (既定は "log")
+
+# 5. D1 migration を本番に適用してデプロイ
+mise run worker:migrate:remote
+mise run worker:deploy
+```
+
+### ローカル開発 (`wrangler dev`)
+
+```sh
+mise run worker:install
+mise run worker:migrations:sync   # migrations/sqlite/*.sql に変更があれば
+mise run worker:migrate:local     # ローカル D1 (Miniflare/workerd) にスキーマ適用
+cp backend/worker/.dev.vars.example backend/worker/.dev.vars   # API_KEY=dev など
+mise run worker:build
+mise run worker:dev               # npx wrangler dev --port 8787
+```
+
+`.dev.vars` は `wrangler dev` 用のローカル secrets ファイル
+(`wrangler secret put` のローカル版、gitignore 済み)。`PUSH_PROVIDER` /
+`LOG_LEVEL` の既定値は `wrangler.toml` の `[vars]` (`log` / `info`) にある
+ので、ローカルでも上書きしない限りそのまま使われる。
+
+`mise run worker:build` は `../cmd/worker` を Go の通常ツールチェーンで
+wasm ビルドする ([TinyGo ではない](https://github.com/syumai/workers-go) —
+`workers-assets-gen -mode=go` を使う)。ent / kin-openapi / apns2 /
+golang.org/x/oauth2 などの依存を含むため `app.wasm` は約 37MB (raw) /
+約 8.2MB (gzip) になる (ビルドのたびにサイズを表示する) — 上記「サイズ上限」
+参照。
+
+### D1 migration (`backend/worker/migrations/`)
+
+D1 は `wrangler d1 migrations` で管理する専用の migration 形式
+(`migrations_dir` 配下の `NNNN_<name>.sql`) を使う。手で書く代わりに、
+`backend/migrations/sqlite/*.sql` (通常の Atlas 製 migration。
+「[Migration (ent + Atlas)](#migration-ent--atlas)」参照) から
+`backend/worker/sync-migrations.sh` (`mise run worker:migrations:sync`) で
+生成し直し、生成物 (`backend/worker/migrations/*.sql`) はコミットする。
+主な書き換え:
+
+- ファイル名をタイムスタンプ付きから `NNNN_<name>.sql` の連番に変える。
+- Atlas が生成する `PRAGMA foreign_keys = off;` / `= on;` を D1 が受け付ける
+  `PRAGMA defer_foreign_keys = true;` / `= false;` に置き換える (D1 は
+  裸の `PRAGMA foreign_keys = ...` を migration 内で拒否するが、
+  `defer_foreign_keys` は受け付ける。効果は「そのトランザクション内では
+  外部キー制約チェックをコミット時まで遅延する」で、テーブル再構築を
+  1 migration = 1 トランザクションで行う Atlas の生成パターンに対しては
+  実質同じ意味になる)。
+
+`internal/ent/schema` を変更したときのフロー:
+`mise run gen:ent` → `mise run db:diff <name> --dialect sqlite` →
+`mise run worker:migrations:sync` → (ローカルで試すなら)
+`mise run worker:migrate:local`。
+
+### ローカルでの動作確認 (実施内容)
+
+この実装は `wrangler dev` (workerd) に対して実際に一通り確認済み:
+
+- `GET /healthz` → `200 {"status":"ok"}`
+- `POST /v1/devices` (`loginId`+`installationId`+`pushToken`) → `200`、
+  `loginIds` に登録した ID が入る
+- 同じ `installationId` に 2 つ目の `loginId` を登録 → `loginIds` が
+  `["u1","u2"]` に増える (置き換わらない)
+- `POST /v1/notifications` を `X-API-Key` なしで叩く → `401`
+- `X-API-Key: dev` (`.dev.vars` の `API_KEY=dev`) 付き、
+  `PUSH_PROVIDER=log` → `200` + ワーカーのコンソールに
+  `"msg":"push (log provider)"` の JSON ログ
+- `DELETE /v1/devices/{installationId}/logins/{loginId}` → `204`
+- `DELETE /v1/logins/{loginId}` (`X-API-Key`) → `200 {"removed":1}`
+- `DELETE /v1/devices/{installationId}` → `204`
+- `PUSH_PROVIDER=expo` + ダミーの `ExponentPushToken[x]` で
+  `POST /v1/notifications` → Expo API からの **アプリケーションレベルの
+  エラー** (`"DeviceNotRegistered: \"ExponentPushToken[x]\" is not a valid
+  Expo push token"`) が返ることを確認 (= ワーカーから外部への outbound
+  fetch 自体は正常に届いている。トランスポート層のエラーではないことの
+  確認が目的)。
+
+未検証: FCM (`PUSH_PROVIDER=native`) の実サービスアカウントを使った送信、
+APNs の実鍵を使った送信 (どちらも認証情報が必要なため)。ただし FCM の
+OAuth2 トークン取得 / APNs の HTTP クライアントは前項「push.Sender と
+fetch」の fix を経由するので、原理的には同じ経路 (cloudflare/fetch) を
+通る。`wrangler deploy` による実際の Cloudflare へのデプロイも未検証
+(D1 データベース作成や `wrangler login` などアカウント操作が要るため)。

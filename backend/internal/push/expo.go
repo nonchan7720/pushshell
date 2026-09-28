@@ -122,7 +122,10 @@ func (s *ExpoSender) sendBatch(ctx context.Context, messages []Message) ([]Resul
 
 	client := s.HTTPClient
 	if client == nil {
-		client = &http.Client{Timeout: 10 * time.Second}
+		// wasmTransport is non-nil only in a js/wasm build (cmd/worker); see
+		// httpclient_js.go for why plain net/http doesn't reach Expo from
+		// inside Cloudflare Workers on its own.
+		client = &http.Client{Transport: wasmTransport(), Timeout: 10 * time.Second}
 	}
 	resp, err := client.Do(req)
 	if err != nil {

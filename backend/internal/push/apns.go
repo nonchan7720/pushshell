@@ -49,13 +49,13 @@ func NewAPNSSender(authKeyPEM []byte, keyID, teamID, topic string, env APNSEnvir
 	tok := &token.Token{AuthKey: authKey, KeyID: keyID, TeamID: teamID}
 	client := apns2.NewTokenClient(tok)
 	// apns2.NewTokenClient always wires up an http2.Transport dialing TCP/TLS
-	// directly, which does not exist in the Cloudflare Workers/wasm sandbox
-	// (see apns_httpclient_js.go). There, we swap in http.DefaultClient,
-	// whose RoundTripper is backed by the JS fetch API in a js/wasm build.
-	// On every other platform apnsWasmHTTPClient (apns_httpclient_default.go)
-	// returns nil and this is a no-op, so cmd/server's behavior is unchanged.
-	if c := apnsWasmHTTPClient(); c != nil {
-		client.HTTPClient = c
+	// directly, which does not exist in the Cloudflare Workers/wasm sandbox.
+	// There (see httpclient_js.go), wasmTransport swaps in one backed by
+	// cloudflare/fetch. On every other platform wasmTransport
+	// (httpclient_default.go) returns nil and this is a no-op, so
+	// cmd/server's behavior is unchanged.
+	if t := wasmTransport(); t != nil {
+		client.HTTPClient = &http.Client{Transport: t, Timeout: apns2.HTTPClientTimeout}
 	}
 	if env == APNSProduction {
 		client = client.Production()

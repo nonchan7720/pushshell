@@ -28,7 +28,6 @@ import (
 	entsql "entgo.io/ent/dialect/sql"
 	workers "github.com/syumai/workers-go"
 	"github.com/syumai/workers-go/cloudflare"
-	"github.com/syumai/workers-go/cloudflare/d1"
 
 	"github.com/nonchan7720/webapp-notification/backend/internal/app"
 	"github.com/nonchan7720/webapp-notification/backend/internal/config"
@@ -125,8 +124,11 @@ func loadEnvFromWorkersRuntime() {
 // path — D1 speaks SQLite. Note D1's driver.Conn does not support
 // transactions (BeginTx returns an error); internal/handler never opens one
 // (client.Tx), so this is not a practical limitation for this backend.
+//
+// openTimeSafeD1Connector (d1time.go), not d1.OpenConnector directly, is
+// what makes this work at all: see its package doc for why.
 func openD1() (*ent.Client, error) {
-	connector, err := d1.OpenConnector(d1Binding)
+	connector, err := openTimeSafeD1Connector(d1Binding)
 	if err != nil {
 		return nil, fmt.Errorf("worker: open D1 binding %q: %w", d1Binding, err)
 	}

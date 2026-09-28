@@ -98,6 +98,50 @@ dir = "backend"
 run = ["gofmt -l . | (! grep .)", "go vet ./..."]
 
 # ---------------------------------------------------------------------------
+# Cloudflare Workers + D1 (backend/cmd/worker, backend/worker/)
+#   詳細は backend/README.md「Cloudflare Workers + D1 で動かす」を参照。
+# ---------------------------------------------------------------------------
+[tasks."worker:install"]
+description = "backend/worker の npm 依存 (wrangler) をインストール"
+dir = "backend/worker"
+run = "npm install"
+
+[tasks."worker:migrations:sync"]
+description = "backend/migrations/sqlite/*.sql から backend/worker/migrations/NNNN_*.sql を再生成 (コミットする)"
+dir = "backend/worker"
+run = "./sync-migrations.sh"
+sources = ["../migrations/sqlite/*.sql"]
+outputs = ["migrations/*.sql"]
+
+[tasks."worker:build"]
+description = "cmd/worker を wasm にビルドし backend/worker/build/ に配置 (wrangler dev/deploy が読む)"
+dir = "backend/worker"
+run = "./build.sh"
+sources = ["../cmd/worker/*.go", "../internal/**/*.go", "../go.mod", "../go.sum"]
+outputs = ["build/worker.mjs", "build/app.wasm"]
+
+[tasks."worker:dev"]
+description = "wrangler dev (localhost:8787)。先に worker:install / worker:migrations:sync / worker:migrate:local / worker:build が必要"
+dir = "backend/worker"
+run = "npx wrangler dev --port 8787"
+
+[tasks."worker:migrate:local"]
+description = "D1 migration をローカル (wrangler dev / Miniflare) に適用"
+dir = "backend/worker"
+run = "npx wrangler d1 migrations apply webapp-notification --local"
+
+[tasks."worker:migrate:remote"]
+description = "D1 migration を本番の D1 データベースに適用 (要 wrangler login / database_id 設定)"
+dir = "backend/worker"
+run = "npx wrangler d1 migrations apply webapp-notification --remote"
+
+[tasks."worker:deploy"]
+description = "worker:build の後 wrangler deploy"
+dir = "backend/worker"
+depends = ["worker:build"]
+run = "npx wrangler deploy"
+
+# ---------------------------------------------------------------------------
 # Database (ent + Atlas)
 #   DB_DIALECT: sqlite | mysql | postgres
 # ---------------------------------------------------------------------------

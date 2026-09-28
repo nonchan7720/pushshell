@@ -58,7 +58,17 @@ func NewFCMSender(serviceAccountJSON []byte, projectID string) (*FCMSender, erro
 	if projectID == "" {
 		return nil, fmt.Errorf("fcm: project id not found in service account JSON and none given (set FCM_PROJECT_ID)")
 	}
-	ts := oauth2.ReuseTokenSource(nil, cfg.TokenSource(context.Background()))
+	ctx := context.Background()
+	if t := wasmTransport(); t != nil {
+		// The JWT->access-token exchange below is itself an HTTP call,
+		// separate from FCMSender.HTTPClient (used only for the actual send
+		// in sendOne): golang.org/x/oauth2 reads its client from this
+		// context (oauth2.HTTPClient), defaulting to http.DefaultClient,
+		// which is exactly the client httpclient_js.go's doc explains does
+		// not work from inside Cloudflare Workers.
+		ctx = context.WithValue(ctx, oauth2.HTTPClient, &http.Client{Transport: t})
+	}
+	ts := oauth2.ReuseTokenSource(nil, cfg.TokenSource(ctx))
 	return &FCMSender{ProjectID: projectID, TokenSource: ts}, nil
 }
 
@@ -156,7 +166,10 @@ func (s *FCMSender) sendOne(ctx context.Context, m Message) Result {
 
 	client := s.HTTPClient
 	if client == nil {
-		client = &http.Client{Timeout: 10 * time.Second}
+		// wasmTransport is non-nil only in a js/wasm build (cmd/worker); see
+		// httpclient_js.go for why plain net/http doesn't reach FCM from
+		// inside Cloudflare Workers on its own.
+		client = &http.Client{Transport: wasmTransport(), Timeout: 10 * time.Second}
 	}
 	resp, err := client.Do(req)
 	if err != nil {
