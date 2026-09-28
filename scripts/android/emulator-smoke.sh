@@ -27,6 +27,9 @@ done
 adb shell settings put global window_animation_scale 0 >/dev/null 2>&1 || true
 adb shell settings put global transition_animation_scale 0 >/dev/null 2>&1 || true
 adb shell settings put global animator_duration_scale 0 >/dev/null 2>&1 || true
+# エミュレータ直後は SystemUI などの ANR ダイアログがアプリに被ることがあるので、
+# エラーダイアログ (ANR / クラッシュ) を出さないようにする
+adb shell settings put global hide_error_dialogs 1 >/dev/null 2>&1 || true
 
 log "installing $APK"
 adb install -r "$APK"
@@ -41,8 +44,19 @@ adb shell am start -W -n "$PACKAGE/.MainActivity" | grep -E "Status|Error" || tr
 
 prev=0
 alive=1
+last="${SHOT_TIMES[${#SHOT_TIMES[@]}-1]}"
 for t in "${SHOT_TIMES[@]}"; do
   sleep $((t - prev)); prev=$t
+  if [ "$t" = "$last" ]; then
+    # 最後の 1 枚はページ下部 (受信ログ) が見えるようにスクロールしてから撮る
+    size="$(adb shell wm size 2>/dev/null | grep -oE '[0-9]+x[0-9]+' | tail -1)"
+    w="${size%x*}"; h="${size#*x}"
+    if [ -n "$w" ] && [ -n "$h" ]; then
+      adb shell input swipe $((w / 2)) $((h * 3 / 4)) $((w / 2)) $((h / 4)) 300 >/dev/null 2>&1 || true
+      adb shell input swipe $((w / 2)) $((h * 3 / 4)) $((w / 2)) $((h / 4)) 300 >/dev/null 2>&1 || true
+      sleep 2
+    fi
+  fi
   adb exec-out screencap -p > "$OUT/screen-${t}s.png" || true
   pid="$(adb shell pidof "$PACKAGE" 2>/dev/null | tr -d '\r' || true)"
   log "screenshot at ${t}s ($(stat -c %s "$OUT/screen-${t}s.png" 2>/dev/null || echo 0) bytes), pid=${pid:-none}"
