@@ -26,6 +26,39 @@ type Message struct {
 	Sound       string
 	Badge       *int
 	ChannelID   string
+
+	// TTLSeconds は通知を保持する秒数 (0 〜 2419200)。nil なら未指定で、
+	// 各サービスの既定値に従う。Expo は ttl、FCM は android.ttl ("<n>s")、
+	// APNs は apns-expiration (現在時刻 + TTLSeconds の UNIX 秒) に対応する。
+	TTLSeconds *int
+	// Priority は配信優先度 "high" | "normal"。"" は high (従来どおり) 扱い。
+	// Expo は priority、FCM は android.priority (high / normal)、
+	// APNs は apns-priority (10 / 5) に対応する。
+	Priority string
+	// CollapseKey は同じキーの未配信の通知を 1 つにまとめるキー。
+	// FCM は android.collapse_key、APNs は apns-collapse-id に対応する。
+	// Expo は非対応のため無視する。
+	CollapseKey string
+	// Image は通知に表示する画像の URL (絶対 http(s) URL)。
+	// Expo は richContent.image、FCM は notification.image に対応する。
+	// APNs は Notification Service Extension なしでは表示できないため無視する。
+	Image string
+	// Silent が true ならサイレント通知 (Data だけを届けるデータのみの通知)。
+	// Title / Body / Sound / Badge は使わない。Expo は _contentAvailable: true、
+	// FCM は notification を省略、APNs は apns-push-type: background と
+	// aps.content-available: 1 (apns-priority は Apple の要件により常に 5) で送る。
+	Silent bool
+	// Subtitle は通知のサブタイトル (iOS)。Expo は subtitle、APNs は
+	// aps.alert.subtitle に対応する。FCM は非対応のため無視する。
+	Subtitle string
+	// ThreadID は iOS の通知グループ化 ID。APNs の aps.thread-id に対応する。
+	// Expo と FCM は非対応のため無視する。
+	ThreadID string
+	// InterruptionLevel は iOS 15 以降の割り込みレベル
+	// "passive" | "active" | "time-sensitive" | "critical"。
+	// Expo は interruptionLevel、APNs は aps.interruption-level に対応する。
+	// FCM は非対応のため無視する。
+	InterruptionLevel string
 }
 
 // Result は 1 通の送信結果。
@@ -59,8 +92,19 @@ func (s LogSender) Send(_ context.Context, messages []Message) ([]Result, error)
 	for i, m := range messages {
 		logger.Info("push (log provider)",
 			"platform", m.Platform, "expoToken", m.ExpoToken, "deviceToken", m.DeviceToken,
-			"title", m.Title, "body", m.Body, "data", m.Data)
+			"title", m.Title, "body", m.Body, "data", m.Data,
+			"ttlSeconds", ttlForLog(m.TTLSeconds), "priority", m.Priority, "collapseKey", m.CollapseKey,
+			"image", m.Image, "silent", m.Silent, "subtitle", m.Subtitle, "threadId", m.ThreadID,
+			"interruptionLevel", m.InterruptionLevel)
 		results[i] = Result{OK: true}
 	}
 	return results, nil
+}
+
+// ttlForLog は TTLSeconds をログ用に値へ展開する (nil は "未指定" を表す -1)。
+func ttlForLog(ttl *int) int {
+	if ttl == nil {
+		return -1
+	}
+	return *ttl
 }

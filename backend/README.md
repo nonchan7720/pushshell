@@ -370,6 +370,43 @@ curl -X POST localhost:8080/v1/notifications \
     "url": "https://example.com/messages/1"
   }'
 
+# 通知送信 (installationId で端末を直接指定。loginIds と併用すると和集合で、
+# 同じ端末には 1 通だけ送る。存在しない installationId は無視される)
+curl -X POST localhost:8080/v1/notifications \
+  -H 'X-API-Key: dev' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "installationIds": ["install-uuid-1"],
+    "title": "お知らせ",
+    "body": "この端末だけに届きます"
+  }'
+
+# 全端末へのブロードキャスト (broadcast は loginIds / installationIds と併用不可)。
+# filter で iOS かつ日本語ロケール (ja, ja-JP, ...) の端末だけに絞り込む
+curl -X POST localhost:8080/v1/notifications \
+  -H 'X-API-Key: dev' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "broadcast": true,
+    "filter": { "platforms": ["ios"], "locales": ["ja"] },
+    "title": "メンテナンスのお知らせ",
+    "body": "今夜 0 時からメンテナンスを行います",
+    "ttl": 3600,
+    "priority": "normal",
+    "collapseKey": "maintenance"
+  }'
+
+# サイレント通知 (データのみ。画面には表示されず data だけがアプリに届く。
+# title / body / sound / badge / subtitle / image は指定できない)
+curl -X POST localhost:8080/v1/notifications \
+  -H 'X-API-Key: dev' \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "loginIds": ["u1"],
+    "silent": true,
+    "data": { "sync": "inbox" }
+  }'
+
 # ログアウト (このアカウントの紐付けだけ外す。端末自体・他のアカウントの紐付けは残る)
 curl -X DELETE localhost:8080/v1/devices/install-uuid-1/logins/u1
 
@@ -379,6 +416,40 @@ curl -X DELETE localhost:8080/v1/devices/install-uuid-1
 # Web アプリ側のセッション失効時にバックエンドから呼ぶ (全端末からそのログイン ID を外す)
 curl -X DELETE localhost:8080/v1/logins/u1 -H 'X-API-Key: dev'
 ```
+
+### 通知の宛先と配信オプション
+
+`POST /v1/notifications` の宛先は次のいずれか (少なくとも 1 つが必須):
+
+- `loginIds`: そのログイン ID に紐づく全端末
+- `installationIds`: 端末を直接指定 (最大 1000 件)。`loginIds` と併用可 (和集合)
+- `broadcast: true`: 登録済みの全端末。`loginIds` / `installationIds` とは併用不可 (400)
+
+どの宛先でも 1 端末には 1 通しか送らず、結果は端末 ID の昇順。`results[].loginIds` は
+リクエストの `loginIds` のうちその端末に紐づくもので、`installationIds` / `broadcast`
+だけで選ばれた端末では `[]`。`filter` は選ばれた端末をさらに絞り込む
+(`platforms`: `ios` / `android`、`locales`: BCP 47 タグの前置一致)。
+`locales` は大文字小文字を区別せず、タグの区切り (`-`) を境界として判定する:
+`ja` は `ja` と `ja-JP` に一致するが `jav` には一致せず、`ja-JP` は `ja-JP` (と
+`ja-JP-...`) だけに一致する。`locale` が未登録の端末はロケール指定に一致しない。
+
+配信オプションと、プロバイダごとの対応 (`-` は非対応で無視される):
+
+| フィールド | 内容 | Expo | FCM (Android) | APNs (iOS) |
+| --- | --- | --- | --- | --- |
+| `ttl` | 保持秒数 (0〜2419200) | `ttl` | `android.ttl` (`"<n>s"`) | `apns-expiration` (現在時刻 + ttl) |
+| `priority` | `high` (既定) / `normal` | `priority` | `android.priority` | `apns-priority` (10 / 5) |
+| `collapseKey` | 未配信の同キー通知を 1 つにまとめる (最大 64 文字) | - | `android.collapse_key` | `apns-collapse-id` |
+| `image` | 画像の絶対 http(s) URL (最大 2048 文字) | `richContent.image` | `notification.image` | - (Notification Service Extension が必要) |
+| `silent` | データのみの通知 (`title` / `body` / `sound` / `badge` / `subtitle` / `image` は指定不可) | `_contentAvailable: true` | `notification` を省略 | `apns-push-type: background`、`apns-priority: 5`、`aps.content-available: 1` |
+| `subtitle` | サブタイトル (最大 256 文字) | `subtitle` | - | `aps.alert.subtitle` |
+| `threadId` | 通知グループ化 ID (最大 64 文字) | - | - | `aps.thread-id` |
+| `interruptionLevel` | `passive` / `active` / `time-sensitive` / `critical` | `interruptionLevel` | - | `aps.interruption-level` |
+
+`silent: false` (既定) のときは `title` が必須。オプションを何も指定しなければ、
+従来と同じペイロード / ヘッダで送信される。サイレント通知を APNs に送るときは
+Apple の要件で `apns-priority` が常に 5 になり、`ttl: 0` の APNs は
+`apns-expiration: 0` (1 回だけ配信を試みる) になる。
 
 ## 差し替えポイント
 
@@ -464,6 +535,14 @@ wasm に転送する JS グルー) と `wasm_exec.js` を生成し、続けて
   (`d1.Conn.BeginTx` は常にエラーを返す)。`internal/store/sqlstore` は
   そもそもトランザクションを開かない (各メソッドが独立した文を 1〜2 個
   発行するだけ) ので、このバックエンドにとっては実害がない。
+- **1 文あたりのバインド変数は最大 100 個**: D1 は 1 つの SQL 文に
+  bind できる値を 100 個までに制限している。`loginIds` / `installationIds` は
+  最大 1000 件指定できるので、`internal/store/sqlstore` は
+  `FindDevicesByLogins` / `FindDevicesByInstallationIDs` の `IN (...)` を
+  100 件ずつ (`maxBindParams`) に分割して問い合わせ、端末 ID でマージして
+  から (`LoginIDs` はソート・重複排除して) 端末 ID 昇順で返す。
+  戻り値の契約は分割しない場合と同じ。`ListDevices` の `filter` は最大でも
+  platform 2 + locale 50 個なので分割は不要。
 - **`time.Time` は使わない**: 以前は ent の SQLite 方言がクエリ引数に
   `time.Time` をそのまま渡し、D1 ドライバ
   (`github.com/syumai/workers-go/cloudflare/d1`) が `syscall/js.Value.Call`
@@ -672,7 +751,10 @@ SMOKE_EXPO=1 mise run worker:smoke    # + Expo Push API への実 fetch (exp.hos
   `loginIds`、`DELETE /v1/logins/{loginId}` の `removed`、端末削除後の 404、
   `POST /v1/notifications` (API キーなし 401、未知ログイン ID は
   `requested: 0`、2 ログイン ID が同じ端末なら 1 通に重複排除して
-  `sent: 1`) とワーカーログ内の `push (log provider)` 行。
+  `sent: 1`)、`installationIds` 宛 / `broadcast` + `filter` の
+  `requested` / `sent` (`PUSH_PROVIDER=log` のときのみ)、`broadcast` と
+  `loginIds` の併用や宛先なしの 400、サイレント通知の検証 と
+  ワーカーログ内の `push (log provider)` 行。
 - `SMOKE_EXPO=1`: 通知送信を `PUSH_PROVIDER=expo` で行い、ダミーの
   `ExponentPushToken[smoke]` に対して Expo API が返す
   `DeviceNotRegistered` (アプリケーションレベルのエラー = outbound fetch が

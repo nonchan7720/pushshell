@@ -233,10 +233,13 @@ type fcmMessage struct {
 type fcmNotification struct {
 	Title string `json:"title,omitempty"`
 	Body  string `json:"body,omitempty"`
+	Image string `json:"image,omitempty"`
 }
 
 type fcmAndroidConfig struct {
 	Priority     string                  `json:"priority,omitempty"`
+	TTL          string                  `json:"ttl,omitempty"`
+	CollapseKey  string                  `json:"collapse_key,omitempty"`
 	Notification *fcmAndroidNotification `json:"notification,omitempty"`
 }
 
@@ -282,18 +285,7 @@ func (s *FCMSender) sendOne(ctx context.Context, m Message) Result {
 		return Result{Error: fmt.Sprintf("fcm: token: %v", err)}
 	}
 
-	msg := fcmMessage{
-		Token: m.DeviceToken,
-		Data:  stringifyData(m.Data),
-	}
-	if m.Title != "" || m.Body != "" {
-		msg.Notification = &fcmNotification{Title: m.Title, Body: m.Body}
-	}
-	android := &fcmAndroidConfig{Priority: "high"}
-	if m.ChannelID != "" || m.Sound != "" {
-		android.Notification = &fcmAndroidNotification{ChannelID: m.ChannelID, Sound: m.Sound}
-	}
-	msg.Android = android
+	msg := buildFCMMessage(m)
 
 	body, err := json.Marshal(fcmSendRequest{Message: msg})
 	if err != nil {
@@ -331,6 +323,35 @@ func (s *FCMSender) sendOne(ctx context.Context, m Message) Result {
 	var errResp fcmErrorResponse
 	_ = json.Unmarshal(raw, &errResp)
 	return classifyFCMError(resp.StatusCode, errResp, raw)
+}
+
+// buildFCMMessage は Message を FCM HTTP v1 の message にする。
+// Subtitle / ThreadID / InterruptionLevel は FCM (Android) では使えないため
+// 無視する。Silent のときは notification を付けず (data のみ)、
+// android.priority は通常どおり (既定 "high") 計算する。
+func buildFCMMessage(m Message) fcmMessage {
+	msg := fcmMessage{
+		Token: m.DeviceToken,
+		Data:  stringifyData(m.Data),
+	}
+	if !m.Silent && (m.Title != "" || m.Body != "" || m.Image != "") {
+		msg.Notification = &fcmNotification{Title: m.Title, Body: m.Body, Image: m.Image}
+	}
+	// FCM HTTP v1 のドキュメントに合わせて小文字の "high" / "normal" を使う。
+	// Priority "" は従来どおり "high" (既存のペイロードを 1 バイトも変えない)。
+	priority := "high"
+	if m.Priority == "normal" {
+		priority = "normal"
+	}
+	android := &fcmAndroidConfig{Priority: priority, CollapseKey: m.CollapseKey}
+	if m.TTLSeconds != nil {
+		android.TTL = fmt.Sprintf("%ds", *m.TTLSeconds)
+	}
+	if !m.Silent && (m.ChannelID != "" || m.Sound != "") {
+		android.Notification = &fcmAndroidNotification{ChannelID: m.ChannelID, Sound: m.Sound}
+	}
+	msg.Android = android
+	return msg
 }
 
 // classifyFCMError maps an FCM HTTP v1 error response to a Result.

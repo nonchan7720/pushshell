@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 )
@@ -54,6 +55,10 @@ type APNSSender struct {
 	Topic string
 	// Concurrency は同時送信数 (省略時 apnsDefaultConcurrency)。
 	Concurrency int
+
+	// now は現在時刻の供給元 (省略時 time.Now)。apns-expiration の計算に使う。
+	// テストで決定的にするための差し替え口。
+	now func() time.Time
 
 	// tokenSource は authorization ヘッダに使う JWT provider token の
 	// 供給元。NewAPNSSender で作るとキャッシュ付きになる。テストでは
@@ -192,8 +197,7 @@ func (s *APNSSender) sendOne(ctx context.Context, m Message) Result {
 	req.Header.Set("content-type", "application/json")
 	req.Header.Set("authorization", "bearer "+tok)
 	req.Header.Set("apns-topic", s.Topic)
-	req.Header.Set("apns-push-type", "alert")
-	req.Header.Set("apns-priority", "10")
+	s.setAPNSHeaders(req, m)
 
 	client := s.HTTPClient
 	if client == nil {
@@ -219,30 +223,73 @@ func (s *APNSSender) sendOne(ctx context.Context, m Message) Result {
 	return classifyAPNSResponse(resp.StatusCode, errResp.Reason)
 }
 
+// setAPNSHeaders は apns-push-type / apns-priority / apns-expiration /
+// apns-collapse-id を設定する。何も指定がなければ従来どおり
+// apns-push-type: alert と apns-priority: 10 だけになる。
+//
+//   - Silent: apns-push-type: background、apns-priority: 5 (Apple は background に 5 を要求する)。
+//   - Priority "normal": apns-priority: 5。それ以外は 10。
+//   - TTLSeconds: apns-expiration = 現在時刻 + TTLSeconds の UNIX 秒 (0 は「即時失効」= 1 回だけ配信を試みる)。
+//   - CollapseKey: apns-collapse-id。
+func (s *APNSSender) setAPNSHeaders(req *http.Request, m Message) {
+	pushType, priority := "alert", "10"
+	if m.Silent {
+		pushType, priority = "background", "5"
+	} else if m.Priority == "normal" {
+		priority = "5"
+	}
+	req.Header.Set("apns-push-type", pushType)
+	req.Header.Set("apns-priority", priority)
+	if m.TTLSeconds != nil {
+		now := time.Now
+		if s.now != nil {
+			now = s.now
+		}
+		if *m.TTLSeconds == 0 {
+			req.Header.Set("apns-expiration", "0")
+		} else {
+			req.Header.Set("apns-expiration", strconv.FormatInt(now().Unix()+int64(*m.TTLSeconds), 10))
+		}
+	}
+	if m.CollapseKey != "" {
+		req.Header.Set("apns-collapse-id", m.CollapseKey)
+	}
+}
+
 // apnsAlert / apnsAps / apnsPayload mirror the shape Apple's APNs API
 // expects under "aps"; buildAPNSPayload attaches arbitrary Message.Data
 // entries as custom top-level payload keys alongside "aps".
 type apnsAlert struct {
-	Title string `json:"title"`
-	Body  string `json:"body"`
+	Title    string `json:"title"`
+	Body     string `json:"body"`
+	Subtitle string `json:"subtitle,omitempty"`
 }
 
 type apnsAps struct {
-	Alert apnsAlert `json:"alert"`
-	Sound string    `json:"sound,omitempty"`
-	Badge *int      `json:"badge,omitempty"`
+	Alert             *apnsAlert `json:"alert,omitempty"`
+	Sound             string     `json:"sound,omitempty"`
+	Badge             *int       `json:"badge,omitempty"`
+	ContentAvailable  int        `json:"content-available,omitempty"`
+	ThreadID          string     `json:"thread-id,omitempty"`
+	InterruptionLevel string     `json:"interruption-level,omitempty"`
 }
 
 // buildAPNSPayload builds the aps payload from a Message. Arbitrary Data
-// entries are attached as custom top-level payload keys.
+// entries are attached as custom top-level payload keys. Image は APNs では
+// (Notification Service Extension なしでは) 使えないため無視する。Silent の
+// ときは alert / sound / badge を付けず aps.content-available: 1 だけにする。
 func buildAPNSPayload(m Message) map[string]any {
-	p := map[string]any{
-		"aps": apnsAps{
-			Alert: apnsAlert{Title: m.Title, Body: m.Body},
-			Sound: m.Sound,
-			Badge: m.Badge,
-		},
+	aps := apnsAps{}
+	if m.Silent {
+		aps.ContentAvailable = 1
+	} else {
+		aps.Alert = &apnsAlert{Title: m.Title, Body: m.Body, Subtitle: m.Subtitle}
+		aps.Sound = m.Sound
+		aps.Badge = m.Badge
+		aps.ThreadID = m.ThreadID
+		aps.InterruptionLevel = m.InterruptionLevel
 	}
+	p := map[string]any{"aps": aps}
 	for k, v := range m.Data {
 		p[k] = v
 	}

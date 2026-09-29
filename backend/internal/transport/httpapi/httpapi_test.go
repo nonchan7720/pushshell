@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -129,6 +130,37 @@ func (s *fakeStore) FindDevicesByLogins(_ context.Context, loginIDs []string) ([
 		out = append(out, core.DeviceMatch{Device: *s.devices[installationID], LoginIDs: matched})
 	}
 	return out, nil
+}
+
+func (s *fakeStore) FindDevicesByInstallationIDs(_ context.Context, installationIDs []string) ([]core.Device, error) {
+	want := map[string]bool{}
+	for _, id := range installationIDs {
+		want[id] = true
+	}
+	return s.listSorted(func(d *core.Device) bool { return want[d.InstallationID] }), nil
+}
+
+func (s *fakeStore) ListDevices(_ context.Context, filter core.DeviceFilter) ([]core.Device, error) {
+	return s.listSorted(func(d *core.Device) bool {
+		return len(filter.Platforms) == 0 || slices.Contains(filter.Platforms, d.Platform)
+	}), nil
+}
+
+func (s *fakeStore) listSorted(keep func(*core.Device) bool) []core.Device {
+	var out []core.Device
+	for installationID, d := range s.devices {
+		if !keep(d) {
+			continue
+		}
+		cp := *d
+		for loginID := range s.links[installationID] {
+			cp.LoginIDs = append(cp.LoginIDs, loginID)
+		}
+		sort.Strings(cp.LoginIDs)
+		out = append(out, cp)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
 }
 
 type fakeSender struct {
@@ -356,7 +388,7 @@ func TestSendNotification_DedupesPerDevice(t *testing.T) {
 	createDevice(t, store, "shared", "ios", "tok", "u1", "u2")
 	createDevice(t, store, "solo", "ios", "tok-solo", "u2")
 
-	req := api.SendNotificationRequest{LoginIds: []string{"u1", "u2"}, Title: "hello"}
+	req := api.SendNotificationRequest{LoginIds: ptr([]string{"u1", "u2"}), Title: ptr("hello")}
 
 	unauth, err := c.SendNotificationWithResponse(ctx, req)
 	if err != nil {
@@ -417,7 +449,7 @@ func TestSendNotification_UnregisteredDeviceDeleted(t *testing.T) {
 
 	createDevice(t, store, "b", "android", "dead", "u1")
 
-	res, err := c.SendNotificationWithResponse(ctx, api.SendNotificationRequest{LoginIds: []string{"u1"}, Title: "x"}, apiKeyEditor)
+	res, err := c.SendNotificationWithResponse(ctx, api.SendNotificationRequest{LoginIds: ptr([]string{"u1"}), Title: ptr("x")}, apiKeyEditor)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -426,5 +458,120 @@ func TestSendNotification_UnregisteredDeviceDeleted(t *testing.T) {
 	}
 	if len(store.devices) != 0 {
 		t.Fatalf("expected unregistered device to be deleted, got %d devices", len(store.devices))
+	}
+}
+
+func TestSendNotification_InstallationIDs(t *testing.T) {
+	sender := &fakeSender{}
+	srv, store := newTestServer(t, sender, true)
+	c := newClient(t, srv)
+	ctx := context.Background()
+
+	createDevice(t, store, "a", "ios", "tok-a", "u1")
+	createDevice(t, store, "b", "android", "tok-b")
+
+	res, err := c.SendNotificationWithResponse(ctx, api.SendNotificationRequest{
+		InstallationIds: ptr([]string{"b", "unknown"}), Title: ptr("hello"),
+		Ttl: ptr(60), Priority: ptr(api.Normal),
+	}, apiKeyEditor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode() != http.StatusOK || res.JSON200 == nil {
+		t.Fatalf("send: %d %s", res.StatusCode(), res.Body)
+	}
+	r := res.JSON200
+	if r.Requested != 1 || r.Sent != 1 || r.Failed != 0 || len(r.Results) != 1 {
+		t.Fatalf("unexpected result: %+v", r)
+	}
+	if r.Results[0].InstallationId != "b" || r.Results[0].LoginIds == nil || len(r.Results[0].LoginIds) != 0 {
+		t.Fatalf("expected loginIds [] for an installationIds target: %+v", r.Results[0])
+	}
+	if !strings.Contains(string(res.Body), `"loginIds":[]`) {
+		t.Fatalf("loginIds must be serialized as an empty array: %s", res.Body)
+	}
+	m := sender.sent[0][0]
+	if m.ExpoToken != "tok-b" || m.TTLSeconds == nil || *m.TTLSeconds != 60 || m.Priority != "normal" {
+		t.Fatalf("unexpected message: %+v", m)
+	}
+}
+
+func TestSendNotification_BroadcastWithFilter(t *testing.T) {
+	sender := &fakeSender{}
+	srv, store := newTestServer(t, sender, true)
+	c := newClient(t, srv)
+	ctx := context.Background()
+
+	createDevice(t, store, "i1", "ios", "tok-i1", "u1")
+	createDevice(t, store, "a1", "android", "tok-a1")
+	createDevice(t, store, "i2", "ios", "tok-i2")
+
+	res, err := c.SendNotificationWithResponse(ctx, api.SendNotificationRequest{
+		Broadcast: ptr(true), Title: ptr("hello"),
+		Filter: &api.NotificationFilter{Platforms: ptr([]api.Platform{api.Ios}), Locales: ptr([]string{"ja"})},
+	}, apiKeyEditor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode() != http.StatusOK || res.JSON200 == nil {
+		t.Fatalf("send: %d %s", res.StatusCode(), res.Body)
+	}
+	// The fake devices have no locale, so the locale filter excludes them all.
+	if res.JSON200.Requested != 0 || res.JSON200.Sent != 0 || len(res.JSON200.Results) != 0 {
+		t.Fatalf("unexpected result: %+v", res.JSON200)
+	}
+
+	sender.sent = nil
+	res, err = c.SendNotificationWithResponse(ctx, api.SendNotificationRequest{
+		Broadcast: ptr(true), Title: ptr("hello"),
+		Filter: &api.NotificationFilter{Platforms: ptr([]api.Platform{api.Ios})},
+	}, apiKeyEditor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.StatusCode() != http.StatusOK || res.JSON200 == nil {
+		t.Fatalf("send: %d %s", res.StatusCode(), res.Body)
+	}
+	r := res.JSON200
+	if r.Requested != 2 || r.Sent != 2 || len(r.Results) != 2 {
+		t.Fatalf("unexpected result: %+v", r)
+	}
+	for _, dr := range r.Results {
+		if dr.LoginIds == nil || len(dr.LoginIds) != 0 {
+			t.Fatalf("expected loginIds [] for a broadcast target: %+v", dr)
+		}
+	}
+	if r.Results[0].InstallationId != "i1" || r.Results[1].InstallationId != "i2" {
+		t.Fatalf("unexpected order: %+v", r.Results)
+	}
+	if len(sender.sent) != 1 || len(sender.sent[0]) != 2 {
+		t.Fatalf("unexpected messages: %+v", sender.sent)
+	}
+}
+
+func TestSendNotification_BroadcastCombinedWithLoginIDsRejected(t *testing.T) {
+	// Both with the OpenAPI validator (cmd/server) and without it (cmd/worker,
+	// only core's own validation), the request is a 400 and nothing is sent.
+	for _, withValidator := range []bool{true, false} {
+		sender := &fakeSender{}
+		srv, store := newTestServer(t, sender, withValidator)
+		c := newClient(t, srv)
+		createDevice(t, store, "a", "ios", "tok-a", "u1")
+
+		res, err := c.SendNotificationWithResponse(context.Background(), api.SendNotificationRequest{
+			Broadcast: ptr(true), LoginIds: ptr([]string{"u1"}), Title: ptr("hello"),
+		}, apiKeyEditor)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if res.StatusCode() != http.StatusBadRequest {
+			t.Fatalf("validator=%v: expected 400, got %d %s", withValidator, res.StatusCode(), res.Body)
+		}
+		if !strings.Contains(string(res.Body), "broadcast cannot be combined") {
+			t.Fatalf("validator=%v: unexpected error body: %s", withValidator, res.Body)
+		}
+		if len(sender.sent) != 0 {
+			t.Fatalf("validator=%v: must not send", withValidator)
+		}
 	}
 }

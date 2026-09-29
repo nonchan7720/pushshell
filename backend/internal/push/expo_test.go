@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 )
 
@@ -107,5 +108,74 @@ func TestExpoSender_NoToken(t *testing.T) {
 	}
 	if !called {
 		t.Fatal("expected server to be called for the one message with a token")
+	}
+}
+
+// expoRawPayload runs one Message through an ExpoSender against a test
+// server and returns the decoded JSON object the server received for it.
+func expoRawPayload(t *testing.T, m Message) map[string]any {
+	t.Helper()
+	var got []map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Errorf("decode: %v", err)
+		}
+		_, _ = w.Write([]byte(`{"data":[{"status":"ok","id":"1"}]}`))
+	}))
+	defer srv.Close()
+
+	res, err := (&ExpoSender{Endpoint: srv.URL}).Send(context.Background(), []Message{m})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res) != 1 || !res[0].OK || len(got) != 1 {
+		t.Fatalf("unexpected result %+v / payload %+v", res, got)
+	}
+	return got[0]
+}
+
+func TestExpoSender_Send_Options(t *testing.T) {
+	ttl := 3600
+	badge := 2
+	got := expoRawPayload(t, Message{
+		ExpoToken: "a", Title: "t", Body: "b", Sound: "default", Badge: &badge,
+		TTLSeconds: &ttl, Priority: "normal", CollapseKey: "ignored", Image: "https://example.com/a.png",
+		Subtitle: "sub", ThreadID: "ignored", InterruptionLevel: "time-sensitive",
+		Data: map[string]any{"k": "v"},
+	})
+	want := map[string]any{
+		"to": "a", "title": "t", "body": "b", "sound": "default", "badge": float64(2),
+		"data": map[string]any{"k": "v"},
+		"ttl":  float64(3600), "priority": "normal",
+		"richContent": map[string]any{"image": "https://example.com/a.png"},
+		"subtitle":    "sub", "interruptionLevel": "time-sensitive",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected payload:\n got %v\nwant %v", got, want)
+	}
+}
+
+func TestExpoSender_Send_Silent(t *testing.T) {
+	ttl := 0
+	got := expoRawPayload(t, Message{
+		ExpoToken: "a", Silent: true, Priority: "high", TTLSeconds: &ttl,
+		Data: map[string]any{"k": "v"},
+	})
+	want := map[string]any{
+		"to": "a", "data": map[string]any{"k": "v"},
+		"_contentAvailable": true, "priority": "high", "ttl": float64(0),
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected payload:\n got %v\nwant %v", got, want)
+	}
+}
+
+// TestExpoSender_Send_NoOptionsPayloadUnchanged pins the payload for a
+// message without any of the option fields (it must not gain new keys).
+func TestExpoSender_Send_NoOptionsPayloadUnchanged(t *testing.T) {
+	got := expoRawPayload(t, Message{ExpoToken: "a", Title: "t", Body: "b", ChannelID: "default"})
+	want := map[string]any{"to": "a", "title": "t", "body": "b", "channelId": "default"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected payload:\n got %v\nwant %v", got, want)
 	}
 }

@@ -11,10 +11,13 @@ import (
 	"fmt"
 	"sort"
 
+	entsql "entgo.io/ent/dialect/sql"
+
 	"github.com/nonchan7720/pushshell/backend/internal/core"
 	"github.com/nonchan7720/pushshell/backend/internal/ent"
 	"github.com/nonchan7720/pushshell/backend/internal/ent/device"
 	"github.com/nonchan7720/pushshell/backend/internal/ent/devicelogin"
+	"github.com/nonchan7720/pushshell/backend/internal/ent/predicate"
 )
 
 // Store implements core.Store on an *ent.Client.
@@ -172,6 +175,63 @@ func (s *Store) FindDevicesByLogins(ctx context.Context, loginIDs []string) ([]c
 		g := groups[id]
 		sort.Strings(g.loginIDs)
 		out[i] = core.DeviceMatch{Device: toDevice(g.device, nil), LoginIDs: g.loginIDs}
+	}
+	return out, nil
+}
+
+// FindDevicesByInstallationIDs implements core.Store.
+func (s *Store) FindDevicesByInstallationIDs(ctx context.Context, installationIDs []string) ([]core.Device, error) {
+	if len(installationIDs) == 0 {
+		return nil, nil
+	}
+	return s.queryDevices(ctx, device.InstallationIDIn(installationIDs...))
+}
+
+// ListDevices implements core.Store.
+//
+// The locale pre-filter is ent's dialect-aware case-insensitive prefix
+// predicate (sql.FieldHasPrefixFold: LOWER(col) LIKE on sqlite, ILIKE on
+// postgres, COLLATE utf8mb4_general_ci LIKE on mysql, with LIKE wildcards in
+// the prefix escaped). It is a plain prefix match; core.Service re-applies
+// the exact BCP 47 tag-boundary rule.
+func (s *Store) ListDevices(ctx context.Context, filter core.DeviceFilter) ([]core.Device, error) {
+	var preds []predicate.Device
+	if len(filter.Platforms) > 0 {
+		platforms := make([]device.Platform, len(filter.Platforms))
+		for i, p := range filter.Platforms {
+			platforms[i] = device.Platform(p)
+		}
+		preds = append(preds, device.PlatformIn(platforms...))
+	}
+	if len(filter.LocalePrefixes) > 0 {
+		locales := make([]predicate.Device, len(filter.LocalePrefixes))
+		for i, prefix := range filter.LocalePrefixes {
+			locales[i] = predicate.Device(entsql.FieldHasPrefixFold(device.FieldLocale, prefix))
+		}
+		preds = append(preds, device.Or(locales...))
+	}
+	return s.queryDevices(ctx, preds...)
+}
+
+// queryDevices loads the devices matching preds ordered by device ID
+// ascending, with LoginIDs populated (sorted; nil if none).
+func (s *Store) queryDevices(ctx context.Context, preds ...predicate.Device) ([]core.Device, error) {
+	devices, err := s.db.Device.Query().
+		Where(preds...).
+		Order(ent.Asc(device.FieldID)).
+		WithLogins().
+		All(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("entstore: query devices: %w", err)
+	}
+	out := make([]core.Device, len(devices))
+	for i, d := range devices {
+		var loginIDs []string
+		for _, l := range d.Edges.Logins {
+			loginIDs = append(loginIDs, l.LoginID)
+		}
+		sort.Strings(loginIDs)
+		out[i] = toDevice(d, loginIDs)
 	}
 	return out, nil
 }

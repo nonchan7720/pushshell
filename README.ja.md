@@ -97,6 +97,9 @@ sequenceDiagram
 3. アプリは通知権限を取り、Expo Push Token と端末情報をまとめて `POST /v1/devices` に登録する。
 4. 任意のサーバーが `POST /v1/notifications` に `{ loginIds, title, body, url }` を投げると、
    バックエンドがそのログイン ID に紐づく端末へ Expo Push API 経由で通知する。
+   `installationIds` で端末を直接指定したり、`broadcast` と `filter` (platform / locale) で
+   全端末から絞り込んで送ることもでき、TTL・優先度・collapse key・画像・サイレント通知などの
+   配信オプションも使えます。詳しくは [`backend/README.md`](backend/README.md) を参照。
 5. 通知をタップすると、アプリは `url` を WebView で開く。
 
 postMessage のプロトコルは [`app/src/bridge.ts`](app/src/bridge.ts) に、API は

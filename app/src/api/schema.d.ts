@@ -122,9 +122,13 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * ログイン ID 宛にプッシュ通知を送る
-         * @description 指定したログイン ID に紐づく全端末へ通知を送る。
+         * プッシュ通知を送る (ログイン ID / installationId / 全端末)
+         * @description 宛先は `loginIds` (そのログイン ID に紐づく全端末)、`installationIds` (端末を直接指定)、
+         *     `broadcast: true` (登録済みの全端末) のいずれか。`loginIds` と `installationIds` は併用でき、
+         *     その場合は和集合を端末単位で重複排除して 1 端末 1 通だけ送る。`broadcast` は他の宛先と併用できない。
+         *     `filter` で宛先をプラットフォームやロケールで絞り込める。
          *     `url` を指定するとアプリは通知タップ時にその URL を WebView で開く。
+         *     TTL・優先度・サイレント通知などの配信オプションは `SendNotificationRequest` を参照。
          */
         post: operations["sendNotification"];
         delete?: never;
@@ -194,9 +198,40 @@ export interface components {
             /** Format: date-time */
             updatedAt: string;
         };
+        /**
+         * @description 宛先端末の絞り込み条件。指定した条件はすべて満たす (AND) 必要があり、
+         *     各条件の配列内は「いずれかに一致」(OR) になる。
+         */
+        NotificationFilter: {
+            /** @description このプラットフォームの端末だけに送る */
+            platforms?: components["schemas"]["Platform"][];
+            /**
+             * @description 端末の `locale` に対する BCP 47 タグの前置一致 (大文字小文字を区別しない、タグ境界で判定)。
+             *     `ja` は `ja` と `ja-JP` に一致するが `jav` には一致しない。`ja-JP` は `ja-JP` (と `ja-JP-...`) にだけ一致する。
+             *     `locale` が未登録の端末はどのロケール指定にも一致しない
+             */
+            locales?: string[];
+        };
+        /**
+         * @description 宛先は `loginIds` / `installationIds` / `broadcast: true` のうち少なくとも 1 つが必須。
+         *     `broadcast: true` は `loginIds` / `installationIds` と併用できない (400)。
+         *
+         *     `silent` が false (既定) のときは `title` が必須。`silent: true` のときは `title` / `body` /
+         *     `sound` / `badge` / `subtitle` / `image` を指定できない (データのみのサイレント通知)。
+         */
         SendNotificationRequest: {
-            loginIds: string[];
-            title: string;
+            /** @description このログイン ID に紐づく全端末に送る */
+            loginIds?: string[];
+            /**
+             * @description この installationId の端末に直接送る。`loginIds` と併用した場合は和集合
+             *     (同じ端末には 1 通だけ送る)。存在しない installationId は黙って無視する
+             */
+            installationIds?: string[];
+            /** @description true なら登録済みの全端末に送る (`filter` で絞り込み可)。`loginIds` / `installationIds` とは併用できない */
+            broadcast?: boolean;
+            filter?: components["schemas"]["NotificationFilter"];
+            /** @description 通知タイトル。`silent` が false のときは必須 */
+            title?: string;
             body?: string;
             /**
              * Format: uri
@@ -212,18 +247,73 @@ export interface components {
             sound?: string;
             /** @description Android の通知チャンネル ID */
             channelId?: string;
+            /**
+             * @description 通知を保持する秒数 (0 〜 2419200 = 28 日)。この時間内に端末へ届けられなければ破棄される。
+             *     Expo は `ttl`、FCM は `android.ttl`、APNs は `apns-expiration` (現在時刻 + ttl の UNIX 秒) に対応する。
+             *     未指定ならプッシュサービスの既定値に従う
+             */
+            ttl?: number;
+            /**
+             * @description 配信優先度。`high` (既定、従来どおりの挙動) は即時配信、`normal` は省電力を優先して遅延することがある。
+             *     Expo は `priority`、FCM は `android.priority` (`high` / `normal`)、APNs は `apns-priority` (10 / 5) に対応する。
+             *     `silent: true` の APNs は Apple の要件により常に 5 になる
+             * @default high
+             * @enum {string}
+             */
+            priority: "high" | "normal";
+            /**
+             * @description 同じキーの未配信の通知を 1 つにまとめる (最新のものだけ残す)。
+             *     FCM は `android.collapse_key`、APNs は `apns-collapse-id` に対応する。
+             *     **Expo は非対応のため無視される**
+             */
+            collapseKey?: string;
+            /**
+             * Format: uri
+             * @description 通知に表示する画像の URL (絶対 http(s) URL)。
+             *     Expo は `richContent.image`、FCM は `notification.image` に対応する。
+             *     **APNs は Notification Service Extension なしでは表示できないため無視される**
+             */
+            image?: string;
+            /**
+             * @description true ならサイレント通知 (データのみの通知)。画面には何も表示せず、`data` だけをアプリに届ける。
+             *     Expo は `title` / `body` / `sound` / `badge` を省いて `_contentAvailable: true` を付け、
+             *     FCM は `notification` を省いて `data` だけ送り、
+             *     APNs は `apns-push-type: background` / `apns-priority: 5` / `aps.content-available: 1` で送る。
+             *     `title` / `body` / `sound` / `badge` / `subtitle` / `image` とは併用できない (400)。`data` は空でもよい
+             * @default false
+             */
+            silent: boolean;
+            /**
+             * @description 通知のサブタイトル (iOS)。Expo は `subtitle`、APNs は `aps.alert.subtitle` に対応する。
+             *     **FCM (Android) は非対応のため無視される**
+             */
+            subtitle?: string;
+            /**
+             * @description iOS の通知グループ化 ID。APNs の `aps.thread-id` に対応する。
+             *     **Expo と FCM は非対応のため無視される**
+             */
+            threadId?: string;
+            /**
+             * @description iOS 15 以降の割り込みレベル。Expo は `interruptionLevel`、APNs は `aps.interruption-level` に対応する。
+             *     **FCM (Android) は非対応のため無視される**
+             * @enum {string}
+             */
+            interruptionLevel?: "passive" | "active" | "time-sensitive" | "critical";
         };
         SendNotificationResult: {
-            /** @description 宛先端末数 */
+            /** @description 宛先端末数 (`filter` 適用後) */
             requested: number;
             sent: number;
             failed: number;
             results: components["schemas"]["DeliveryResult"][];
         };
-        /** @description 端末ごとの送信結果。同じ端末に複数の宛先ログイン ID が該当しても 1 通にまとめる */
+        /** @description 端末ごとの送信結果。同じ端末が複数の宛先 (ログイン ID / installationId) に該当しても 1 通にまとめる */
         DeliveryResult: {
             installationId: string;
-            /** @description リクエストの loginIds のうち、この端末に紐付いていたもの */
+            /**
+             * @description リクエストの loginIds のうち、この端末に紐付いていたもの。
+             *     `installationIds` / `broadcast` だけで選ばれた端末では空配列
+             */
             loginIds: string[];
             /** @enum {string} */
             status: "ok" | "error";

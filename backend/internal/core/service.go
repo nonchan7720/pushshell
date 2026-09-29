@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 
 	"github.com/nonchan7720/pushshell/backend/internal/push"
 )
@@ -172,18 +173,84 @@ func (s *Service) GetDevice(ctx context.Context, installationID string) (Device,
 	return d, nil
 }
 
-// Send delivers a notification to every device linked to any of
-// in.LoginIDs. A device linked to several of them still gets exactly one
-// push.Message (see Store.FindDevicesByLogins); a device whose send result
-// comes back Unregistered is deleted.
+// sendTarget is one device Service.Send will push to, plus the requested
+// login IDs (SendInput.LoginIDs) it was reached through (empty if it was
+// only reached via InstallationIDs or Broadcast).
+type sendTarget struct {
+	device   Device
+	loginIDs []string
+}
+
+// resolveTargets turns the targeting fields of in into the set of devices to
+// push to: FindDevicesByLogins for LoginIDs, FindDevicesByInstallationIDs for
+// InstallationIDs (union, one entry per device), or ListDevices for
+// Broadcast; then in.Filter is applied exactly (MatchesFilter). The result is
+// ordered by device ID ascending.
+func (s *Service) resolveTargets(ctx context.Context, in SendInput) ([]sendTarget, error) {
+	byID := map[int64]*sendTarget{}
+	add := func(d Device, loginIDs []string) {
+		t, ok := byID[d.ID]
+		if !ok {
+			t = &sendTarget{device: d}
+			byID[d.ID] = t
+		}
+		t.loginIDs = append(t.loginIDs, loginIDs...)
+	}
+
+	if len(in.LoginIDs) > 0 {
+		matches, err := s.store.FindDevicesByLogins(ctx, in.LoginIDs)
+		if err != nil {
+			return nil, fmt.Errorf("core: find devices by logins: %w", err)
+		}
+		for _, m := range matches {
+			add(m.Device, m.LoginIDs)
+		}
+	}
+	if len(in.InstallationIDs) > 0 {
+		devices, err := s.store.FindDevicesByInstallationIDs(ctx, in.InstallationIDs)
+		if err != nil {
+			return nil, fmt.Errorf("core: find devices by installation ids: %w", err)
+		}
+		for _, d := range devices {
+			add(d, nil)
+		}
+	}
+	if in.Broadcast {
+		devices, err := s.store.ListDevices(ctx, in.Filter)
+		if err != nil {
+			return nil, fmt.Errorf("core: list devices: %w", err)
+		}
+		for _, d := range devices {
+			add(d, nil)
+		}
+	}
+
+	targets := make([]sendTarget, 0, len(byID))
+	for _, t := range byID {
+		if !MatchesFilter(t.device, in.Filter) {
+			continue
+		}
+		targets = append(targets, *t)
+	}
+	sort.Slice(targets, func(i, j int) bool { return targets[i].device.ID < targets[j].device.ID })
+	return targets, nil
+}
+
+// Send delivers a notification to the devices selected by in.LoginIDs (every
+// device linked to any of them), in.InstallationIDs (those devices directly)
+// or in.Broadcast (every device), narrowed by in.Filter. A device reached
+// several ways (e.g. linked to several of the requested login IDs, or also
+// listed in InstallationIDs) still gets exactly one push.Message, and results
+// are ordered by device ID ascending; a device whose send result comes back
+// Unregistered is deleted.
 func (s *Service) Send(ctx context.Context, in SendInput) (SendResult, error) {
 	if err := validateSendInput(in); err != nil {
 		return SendResult{}, err
 	}
 
-	matches, err := s.store.FindDevicesByLogins(ctx, in.LoginIDs)
+	matches, err := s.resolveTargets(ctx, in)
 	if err != nil {
-		return SendResult{}, fmt.Errorf("core: find devices by logins: %w", err)
+		return SendResult{}, err
 	}
 
 	result := SendResult{Requested: len(matches), Results: make([]DeliveryResult, 0, len(matches))}
@@ -202,15 +269,23 @@ func (s *Service) Send(ctx context.Context, in SendInput) (SendResult, error) {
 	messages := make([]push.Message, len(matches))
 	for i, m := range matches {
 		messages[i] = push.Message{
-			Platform:    m.Device.Platform,
-			ExpoToken:   m.Device.PushToken,
-			DeviceToken: m.Device.DeviceToken,
-			Title:       in.Title,
-			Body:        in.Body,
-			Data:        data,
-			Sound:       in.Sound,
-			Badge:       in.Badge,
-			ChannelID:   in.ChannelID,
+			Platform:          m.device.Platform,
+			ExpoToken:         m.device.PushToken,
+			DeviceToken:       m.device.DeviceToken,
+			Title:             in.Title,
+			Body:              in.Body,
+			Data:              data,
+			Sound:             in.Sound,
+			Badge:             in.Badge,
+			ChannelID:         in.ChannelID,
+			TTLSeconds:        in.TTLSeconds,
+			Priority:          in.Priority,
+			CollapseKey:       in.CollapseKey,
+			Image:             in.Image,
+			Silent:            in.Silent,
+			Subtitle:          in.Subtitle,
+			ThreadID:          in.ThreadID,
+			InterruptionLevel: in.InterruptionLevel,
 		}
 	}
 
@@ -224,7 +299,7 @@ func (s *Service) Send(ctx context.Context, in SendInput) (SendResult, error) {
 
 	for i, m := range matches {
 		r := sent[i]
-		dr := DeliveryResult{InstallationID: m.Device.InstallationID, LoginIDs: m.LoginIDs, Status: "ok"}
+		dr := DeliveryResult{InstallationID: m.device.InstallationID, LoginIDs: m.loginIDs, Status: "ok"}
 		if r.OK {
 			result.Sent++
 		} else {
@@ -232,18 +307,19 @@ func (s *Service) Send(ctx context.Context, in SendInput) (SendResult, error) {
 			dr.Status = "error"
 			dr.Error = r.Error
 			if r.Unregistered {
-				if err := s.store.DeleteDevice(ctx, m.Device.InstallationID); err != nil {
-					s.logger.Warn("failed to delete unregistered device", "installationId", m.Device.InstallationID, "err", err)
+				if err := s.store.DeleteDevice(ctx, m.device.InstallationID); err != nil {
+					s.logger.Warn("failed to delete unregistered device", "installationId", m.device.InstallationID, "err", err)
 				} else {
 					dr.Unregistered = true
-					s.logger.Info("device removed (token unregistered)", "installationId", m.Device.InstallationID)
+					s.logger.Info("device removed (token unregistered)", "installationId", m.device.InstallationID)
 				}
 			}
 		}
 		result.Results = append(result.Results, dr)
 	}
 	s.logger.Info("notification sent",
-		"loginIds", len(in.LoginIDs), "requested", result.Requested, "sent", result.Sent, "failed", result.Failed)
+		"loginIds", len(in.LoginIDs), "installationIds", len(in.InstallationIDs), "broadcast", in.Broadcast,
+		"requested", result.Requested, "sent", result.Sent, "failed", result.Failed)
 	return result, nil
 }
 

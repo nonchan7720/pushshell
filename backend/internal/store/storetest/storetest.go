@@ -29,6 +29,13 @@ func RunStoreTests(t *testing.T, newStore func(t *testing.T) core.Store) {
 	t.Run("DeleteDevice_Idempotent", func(t *testing.T) { testDeleteDeviceIdempotent(t, newStore(t)) })
 	t.Run("FindDevicesByLogins", func(t *testing.T) { testFindDevicesByLogins(t, newStore(t)) })
 	t.Run("FindDevicesByLogins_Empty", func(t *testing.T) { testFindDevicesByLoginsEmpty(t, newStore(t)) })
+	t.Run("FindDevicesByInstallationIDs", func(t *testing.T) { testFindDevicesByInstallationIDs(t, newStore(t)) })
+	t.Run("FindDevicesByInstallationIDs_Empty", func(t *testing.T) { testFindDevicesByInstallationIDsEmpty(t, newStore(t)) })
+	t.Run("ListDevices", func(t *testing.T) { testListDevices(t, newStore(t)) })
+	t.Run("ListDevices_PlatformFilter", func(t *testing.T) { testListDevicesPlatformFilter(t, newStore(t)) })
+	t.Run("ListDevices_LocaleFilter", func(t *testing.T) { testListDevicesLocaleFilter(t, newStore(t)) })
+	t.Run("ListDevices_PlatformAndLocaleFilter", func(t *testing.T) { testListDevicesPlatformAndLocaleFilter(t, newStore(t)) })
+	t.Run("ListDevices_Empty", func(t *testing.T) { testListDevicesEmpty(t, newStore(t)) })
 }
 
 func testUpsertDeviceCreateAndUpdate(t *testing.T, s core.Store) {
@@ -317,6 +324,223 @@ func testFindDevicesByLoginsEmpty(t *testing.T, s core.Store) {
 	}
 	if len(matches) != 0 {
 		t.Fatalf("expected no matches, got %+v", matches)
+	}
+}
+
+// seedDevice upserts a device (with locale, which may be "") and links it to
+// logins.
+func seedDevice(t *testing.T, s core.Store, inst, platform, locale string, logins ...string) {
+	t.Helper()
+	ctx := context.Background()
+	if _, err := s.UpsertDevice(ctx, core.DeviceInput{
+		InstallationID: inst, Platform: platform, PushToken: "tok-" + inst, Locale: locale,
+	}); err != nil {
+		t.Fatalf("upsert %s: %v", inst, err)
+	}
+	for _, l := range logins {
+		if err := s.LinkLogin(ctx, inst, l); err != nil {
+			t.Fatalf("link %s/%s: %v", inst, l, err)
+		}
+	}
+}
+
+// installationIDsOf returns the installation IDs of devices, in order.
+func installationIDsOf(devices []core.Device) []string {
+	out := make([]string, len(devices))
+	for i, d := range devices {
+		out[i] = d.InstallationID
+	}
+	return out
+}
+
+func testFindDevicesByInstallationIDs(t *testing.T, s core.Store) {
+	ctx := context.Background()
+	seedDevice(t, s, "first", "ios", "ja-JP", "u2", "u1")
+	seedDevice(t, s, "second", "android", "en-US") // no logins
+	seedDevice(t, s, "third", "ios", "", "u3")
+	seedDevice(t, s, "fourth", "android", "", "u1")
+
+	// Ordered by device ID ascending regardless of the requested order;
+	// unknown and duplicate installation IDs are skipped / collapsed.
+	devices, err := s.FindDevicesByInstallationIDs(ctx, []string{"third", "nope", "first", "second", "third"})
+	if err != nil {
+		t.Fatalf("find: %v", err)
+	}
+	if got := installationIDsOf(devices); !reflect.DeepEqual(got, []string{"first", "second", "third"}) {
+		t.Fatalf("unexpected devices/order: %v", got)
+	}
+	if devices[0].ID >= devices[1].ID || devices[1].ID >= devices[2].ID {
+		t.Fatalf("expected ascending device IDs: %+v", devices)
+	}
+	// LoginIDs populated and sorted; all of the device's logins, not only
+	// requested ones (there is no login filter here).
+	if !reflect.DeepEqual(devices[0].LoginIDs, []string{"u1", "u2"}) {
+		t.Fatalf("unexpected loginIds for first: %+v", devices[0].LoginIDs)
+	}
+	if len(devices[1].LoginIDs) != 0 {
+		t.Fatalf("expected no loginIds for second: %+v", devices[1].LoginIDs)
+	}
+	if !reflect.DeepEqual(devices[2].LoginIDs, []string{"u3"}) {
+		t.Fatalf("unexpected loginIds for third: %+v", devices[2].LoginIDs)
+	}
+	// Full device fields are populated.
+	if devices[0].Platform != "ios" || devices[0].PushToken != "tok-first" || devices[0].Locale != "ja-JP" || devices[0].CreatedAt.IsZero() {
+		t.Fatalf("unexpected device fields: %+v", devices[0])
+	}
+
+	none, err := s.FindDevicesByInstallationIDs(ctx, []string{"nope", "nada"})
+	if err != nil {
+		t.Fatalf("find (unknown): %v", err)
+	}
+	if len(none) != 0 {
+		t.Fatalf("expected no devices, got %+v", none)
+	}
+}
+
+func testFindDevicesByInstallationIDsEmpty(t *testing.T, s core.Store) {
+	ctx := context.Background()
+	seedDevice(t, s, "a", "ios", "", "u1")
+	for _, in := range [][]string{nil, {}} {
+		devices, err := s.FindDevicesByInstallationIDs(ctx, in)
+		if err != nil {
+			t.Fatalf("find (empty): %v", err)
+		}
+		if devices != nil {
+			t.Fatalf("expected nil for empty input, got %+v", devices)
+		}
+	}
+}
+
+func testListDevices(t *testing.T, s core.Store) {
+	ctx := context.Background()
+	seedDevice(t, s, "d1", "ios", "ja-JP", "u2", "u1")
+	seedDevice(t, s, "d2", "android", "")
+	seedDevice(t, s, "d3", "ios", "en-US", "u3")
+
+	devices, err := s.ListDevices(ctx, core.DeviceFilter{})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if got := installationIDsOf(devices); !reflect.DeepEqual(got, []string{"d1", "d2", "d3"}) {
+		t.Fatalf("unexpected devices/order: %v", got)
+	}
+	if !reflect.DeepEqual(devices[0].LoginIDs, []string{"u1", "u2"}) || len(devices[1].LoginIDs) != 0 ||
+		!reflect.DeepEqual(devices[2].LoginIDs, []string{"u3"}) {
+		t.Fatalf("unexpected loginIds: %+v", devices)
+	}
+	if devices[0].Locale != "ja-JP" || devices[1].Locale != "" || devices[2].Platform != "ios" {
+		t.Fatalf("unexpected device fields: %+v", devices)
+	}
+}
+
+func testListDevicesPlatformFilter(t *testing.T, s core.Store) {
+	ctx := context.Background()
+	seedDevice(t, s, "i1", "ios", "", "u1")
+	seedDevice(t, s, "a1", "android", "", "u1")
+	seedDevice(t, s, "i2", "ios", "")
+
+	ios, err := s.ListDevices(ctx, core.DeviceFilter{Platforms: []string{"ios"}})
+	if err != nil {
+		t.Fatalf("list ios: %v", err)
+	}
+	if got := installationIDsOf(ios); !reflect.DeepEqual(got, []string{"i1", "i2"}) {
+		t.Fatalf("ios: %v", got)
+	}
+	if !reflect.DeepEqual(ios[0].LoginIDs, []string{"u1"}) {
+		t.Fatalf("ios loginIds: %+v", ios[0].LoginIDs)
+	}
+
+	both, err := s.ListDevices(ctx, core.DeviceFilter{Platforms: []string{"android", "ios"}})
+	if err != nil {
+		t.Fatalf("list both: %v", err)
+	}
+	if got := installationIDsOf(both); !reflect.DeepEqual(got, []string{"i1", "a1", "i2"}) {
+		t.Fatalf("both platforms: %v", got)
+	}
+}
+
+func testListDevicesLocaleFilter(t *testing.T, s core.Store) {
+	ctx := context.Background()
+	seedDevice(t, s, "ja", "ios", "ja", "u1")
+	seedDevice(t, s, "ja-jp", "ios", "ja-JP")
+	seedDevice(t, s, "jav", "android", "jav") // plain prefix match: "ja" also matches this one
+	seedDevice(t, s, "en-us", "android", "en-US")
+	seedDevice(t, s, "none", "android", "")
+	seedDevice(t, s, "pct", "android", "x%y_z") // LIKE wildcards in stored data
+	seedDevice(t, s, "other", "android", "xay")
+
+	list := func(prefixes ...string) []string {
+		t.Helper()
+		devices, err := s.ListDevices(ctx, core.DeviceFilter{LocalePrefixes: prefixes})
+		if err != nil {
+			t.Fatalf("list %v: %v", prefixes, err)
+		}
+		return installationIDsOf(devices)
+	}
+
+	// Case-insensitive prefix match on the stored locale.
+	if got := list("JA"); !reflect.DeepEqual(got, []string{"ja", "ja-jp", "jav"}) {
+		t.Fatalf("prefix JA: %v", got)
+	}
+	if got := list("ja-jp"); !reflect.DeepEqual(got, []string{"ja-jp"}) {
+		t.Fatalf("prefix ja-jp: %v", got)
+	}
+	if got := list("EN-us"); !reflect.DeepEqual(got, []string{"en-us"}) {
+		t.Fatalf("prefix EN-us: %v", got)
+	}
+	// Several prefixes are OR-ed; devices without a locale never match.
+	if got := list("en", "ja-JP"); !reflect.DeepEqual(got, []string{"ja-jp", "en-us"}) {
+		t.Fatalf("prefixes en,ja-JP: %v", got)
+	}
+	if got := list("zz"); len(got) != 0 {
+		t.Fatalf("prefix zz: %v", got)
+	}
+	// LIKE wildcards in the prefix are matched literally.
+	if got := list("x%"); !reflect.DeepEqual(got, []string{"pct"}) {
+		t.Fatalf("prefix x%%: %v", got)
+	}
+	if got := list("x%y_"); !reflect.DeepEqual(got, []string{"pct"}) {
+		t.Fatalf("prefix x%%y_: %v", got)
+	}
+	if got := list("_a"); len(got) != 0 {
+		t.Fatalf("prefix _a: %v", got)
+	}
+}
+
+func testListDevicesPlatformAndLocaleFilter(t *testing.T, s core.Store) {
+	ctx := context.Background()
+	seedDevice(t, s, "ios-ja", "ios", "ja-JP", "u1")
+	seedDevice(t, s, "android-ja", "android", "ja-JP")
+	seedDevice(t, s, "ios-en", "ios", "en-US")
+	seedDevice(t, s, "android-en", "android", "en-GB")
+
+	devices, err := s.ListDevices(ctx, core.DeviceFilter{Platforms: []string{"ios"}, LocalePrefixes: []string{"ja"}})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if got := installationIDsOf(devices); !reflect.DeepEqual(got, []string{"ios-ja"}) {
+		t.Fatalf("ios+ja: %v", got)
+	}
+	if !reflect.DeepEqual(devices[0].LoginIDs, []string{"u1"}) {
+		t.Fatalf("loginIds: %+v", devices[0].LoginIDs)
+	}
+
+	devices, err = s.ListDevices(ctx, core.DeviceFilter{Platforms: []string{"android"}, LocalePrefixes: []string{"ja", "en"}})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if got := installationIDsOf(devices); !reflect.DeepEqual(got, []string{"android-ja", "android-en"}) {
+		t.Fatalf("android+ja/en: %v", got)
+	}
+}
+
+func testListDevicesEmpty(t *testing.T, s core.Store) {
+	devices, err := s.ListDevices(context.Background(), core.DeviceFilter{})
+	if err != nil {
+		t.Fatalf("list (empty store): %v", err)
+	}
+	if len(devices) != 0 {
+		t.Fatalf("expected no devices, got %+v", devices)
 	}
 }
 
