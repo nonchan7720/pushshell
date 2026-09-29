@@ -192,8 +192,13 @@ into a different app. Details in [`app/README.md`](app/README.md).
 | `APP_ICON` / `APP_ADAPTIVE_ICON_*` / `APP_SPLASH_*` | Icons and splash screen |
 | `IOS_BUNDLE_ID` / `ANDROID_PACKAGE` | Bundle identifiers |
 | `WEBAPP_URL` / `ALLOWED_ORIGINS` | URL to show and the allowed origins |
+| `ASSOCIATED_DOMAINS` | Comma-separated hosts that open the app via Universal Links / App Links (off by default; also added to the allowed origins) |
 | `API_BASE_URL` | Backend URL |
 | `EAS_PROJECT_ID` | Required for Expo Push Tokens |
+
+For Universal Links / App Links, host the templates in
+[`examples/well-known/`](examples/well-known/README.md) at `https://<host>/.well-known/` for every
+domain in `ASSOCIATED_DOMAINS`.
 
 ## Build and run Android locally
 

@@ -41,6 +41,7 @@ cp .env.example .env
 | `WEBAPP_URL` | WebView に表示する Web アプリの URL | `https://example.com` |
 | `API_BASE_URL` | バックエンド (Go) の URL | `http://localhost:8080` |
 | `ALLOWED_ORIGINS` | WebView / bridge が許可する origin (カンマ区切り) | `WEBAPP_URL` の origin |
+| `ASSOCIATED_DOMAINS` | Universal Links / App Links でアプリを開くホスト (カンマ区切り、ホスト名のみ)。指定したホストは `ALLOWED_ORIGINS` にも自動で追加される。詳細は「4. Universal Links / App Links」 | なし (無効) |
 | `EAS_PROJECT_ID` | EAS の projectId (`PUSH_PROVIDER=expo` で Expo Push Token の取得に必須) | なし |
 | `PUSH_PROVIDER` | 通知の配送方式。`expo` (Expo Push Service) か `native` (FCM / APNs をバックエンドが直接叩く)。バックエンドの `PUSH_PROVIDER` と揃える | `expo` |
 | `WEBVIEW_ANDROID_LAYER_TYPE` | Android WebView の描画レイヤー (`none` / `software` / `hardware`)。GPU の無い環境で WebView が落ちるときに `software` | `none` |
@@ -114,7 +115,42 @@ eas build --platform ios --profile preview
 [EAS の Environment Variables](https://docs.expo.dev/eas/environment-variables/) で
 プロジェクトに登録するか、CI 上で `.env` を生成することを推奨します。
 
-## 4. Web アプリ ⇔ ネイティブの postMessage プロトコル (bridge)
+## 4. Universal Links / App Links
+
+メールや SNS の `https://example.com/...` リンクをタップしたときに、ブラウザではなくこのアプリを
+起動して WebView 内でそのページを開けます。opt-in で、`ASSOCIATED_DOMAINS` が未設定なら
+何も設定されず、従来どおりの挙動です。
+
+```sh
+# .env
+ASSOCIATED_DOMAINS=example.com,www.example.com
+```
+
+- ホスト名だけをカンマ区切りで指定します (`https://` などのスキーム・パス・ポートを含めると
+  `app.config.ts` がエラーにします)。
+- iOS は `ios.associatedDomains` に `applinks:<host>` を、Android は `android.intentFilters` に
+  `autoVerify: true` の `https://<host>` の intent filter をホストごとに追加します。env を
+  変えたら `npx expo prebuild --clean` をやり直してください。
+- iOS は App ID に Associated Domains の capability が必要です。EAS Build で EAS に資格情報を
+  管理させていれば自動で有効化されます。Xcode で手動署名する場合は Apple Developer の
+  Identifiers で該当 App ID に Associated Domains を追加してください。
+- 指定したホストは `https://<host>` として `ALLOWED_ORIGINS` にも自動で追加されます
+  (`ALLOWED_ORIGINS` を明示している場合も、`WEBAPP_URL` から導出している場合も同じ)。
+  そうしないと WebView がリンク先ページの読み込みを拒否してしまうためです。
+- 各ホストの `/.well-known/` に `apple-app-site-association` と `assetlinks.json` を公開する
+  必要があります。テンプレートと公開・確認手順は
+  [`../examples/well-known/`](../examples/well-known/README.md) を参照してください。
+
+実行時の挙動 ([`src/useDeepLinkNavigation.ts`](./src/useDeepLinkNavigation.ts)):
+
+- **コールドスタート** (リンクをタップしてアプリが起動された): `getInitialURL()` で受け取った
+  URL を、WebView の最初のロード (`WEBAPP_URL`) が終わってから (`onLoadEnd`) 遷移させます。
+  ロード完了前に遷移させると初回ロードに上書きされてしまうためです。
+- **起動中**: `url` イベントで受け取ったリンクをその場で WebView に遷移させます。
+- `http(s)` かつ許可 origin の URL だけを遷移対象にします。`APP_SCHEME://...` などの
+  カスタムスキームや未知の origin は警告ログを出して無視します。
+
+## 5. Web アプリ ⇔ ネイティブの postMessage プロトコル (bridge)
 
 プロトコルの正式な定義とコメントは [`src/bridge.ts`](./src/bridge.ts) にあります。
 Web アプリ側の実装者はこのファイルだけ読めば連携できるはずです。要約:
@@ -154,7 +190,7 @@ openExternal/getState を送信するボタンと、受信した `nativeapp` イ
 `ready` イベントの `loginIds` の表示があります。これを配信するサーバーの URL を `WEBAPP_URL`
 に設定して dev client で開けば、bridge の動作を手軽に確認できます。
 
-## 5. バックエンドの呼び出し
+## 6. バックエンドの呼び出し
 
 `src/api/client.ts` が [`../openapi/openapi.yaml`](../openapi/openapi.yaml) から生成した型
 (`src/api/schema.d.ts`, `npm run gen:api` で再生成) を使って以下を呼びます。`login` メッセージの
@@ -193,7 +229,7 @@ Web アプリ側でセッションが失効した (例: API が 401 を返して
 端末登録に使う値の組み立ては [`src/notifications.ts`](./src/notifications.ts)
 (`buildDeviceRegistration`) を参照してください。
 
-## 6. バックエンドからテスト通知を送る
+## 7. バックエンドからテスト通知を送る
 
 バックエンドを起動しておきます (詳細は `backend/README.md` 等を参照):
 
@@ -231,6 +267,8 @@ src/bridge.ts               Web ⇔ ネイティブの postMessage プロトコ�
 src/installation.ts         installationId / ログイン状態の永続化 (expo-secure-store)
 src/notifications.ts         通知権限・push token 取得・DeviceRegistration の組み立て
 src/useNotificationNavigation.ts  通知タップ時の WebView 遷移 hook
+src/useDeepLinkNavigation.ts      Universal Links / App Links による WebView 遷移 hook
+src/webviewNavigation.ts          許可 origin なら WebView を遷移させる共通ヘルパー
 App.tsx                     WebView 画面本体
 eas.json                    EAS Build のプロファイル
 ```

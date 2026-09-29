@@ -52,6 +52,10 @@ on:
         description: "許可 origin (ALLOWED_ORIGINS, カンマ区切り。空なら WEBAPP_URL の origin)"
         type: string
         default: ""
+      associated_domains:
+        description: "Universal Links / App Links のホスト (ASSOCIATED_DOMAINS, カンマ区切り。空なら無効。許可 origin にも自動追加)"
+        type: string
+        default: ""
       push_provider:
         description: "通知の配送方式 (PUSH_PROVIDER)"
         type: choice
@@ -98,6 +102,7 @@ on:
       webapp_url: { type: string, default: "https://example.com" }
       api_base_url: { type: string, default: "https://example.com/api" }
       allowed_origins: { type: string, default: "" }
+      associated_domains: { type: string, default: "" }
       push_provider: { type: string, default: "expo" }
       eas_project_id: { type: string, default: "" }
       uses_cleartext_traffic: { type: boolean, default: false }
@@ -145,6 +150,7 @@ jobs:
       WEBAPP_URL: ${{ inputs.webapp_url }}
       API_BASE_URL: ${{ inputs.api_base_url }}
       ALLOWED_ORIGINS: ${{ inputs.allowed_origins }}
+      ASSOCIATED_DOMAINS: ${{ inputs.associated_domains }}
       PUSH_PROVIDER: ${{ inputs.push_provider }}
       EAS_PROJECT_ID: ${{ inputs.eas_project_id }}
       ANDROID_USES_CLEARTEXT_TRAFFIC: ${{ inputs.uses_cleartext_traffic }}

@@ -23,10 +23,11 @@ These are the changes with the best ratio of adoption gained to effort spent.
    `pushshell.login(id, token)` returning a Promise that resolves on `registered` and rejects on
    `error`, an `isNative()` check, and typed event subscriptions. Add `protocolVersion` to the
    `ready` event at the same time so compatibility can be managed later.
-3. ⬜ **Universal Links / App Links.** Notification URLs open inside the WebView, but an
-   `https://example.com/...` link from email or social media does not launch the app. Accept
-   `ASSOCIATED_DOMAINS` from env and document how to publish `apple-app-site-association` and
-   `assetlinks.json`.
+3. ✅ **Universal Links / App Links.** An `https://example.com/...` link from email or social
+   media now launches the app and opens in the WebView. `ASSOCIATED_DOMAINS` (opt-in, from env)
+   configures `ios.associatedDomains` and the Android `intentFilters`, and every associated domain
+   is added to `ALLOWED_ORIGINS` automatically. Templates and publishing instructions for
+   `apple-app-site-association` and `assetlinks.json` live in `examples/well-known/`.
 4. ⬜ **Richer notification targeting and options.** Only `loginIds` can be targeted today, and
    there is no TTL / priority / collapse key / image / silent (data-only) message / iOS
    `threadId` / `interruptionLevel`. Add direct `installationIds`, filters by platform and

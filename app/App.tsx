@@ -45,6 +45,7 @@ import {
   getPushTokens,
   type PushTokens,
 } from "./src/notifications";
+import { useDeepLinkNavigation } from "./src/useDeepLinkNavigation";
 import { useNotificationNavigation } from "./src/useNotificationNavigation";
 
 // ネイティブの Splash Screen は WebView が最初のロードを終えるまで表示し続ける。
@@ -69,6 +70,8 @@ export default function App() {
   loginsRef.current = logins;
 
   useNotificationNavigation(webViewRef);
+  // Universal Links / App Links。コールドスタート時のリンクは初回ロード完了後に適用する。
+  const { applyPendingDeepLink } = useDeepLinkNavigation(webViewRef);
 
   // 初期化: installationId の確保、前回ログイン状態 (複数アカウント分) の復元。
   useEffect(() => {
@@ -284,7 +287,8 @@ export default function App() {
     setLoadError(null);
     await SplashScreen.hideAsync().catch(() => {});
     await sendReady();
-  }, [sendReady]);
+    applyPendingDeepLink();
+  }, [sendReady, applyPendingDeepLink]);
 
   const handleError = useCallback((event: WebViewErrorEvent) => {
     setLoading(false);
