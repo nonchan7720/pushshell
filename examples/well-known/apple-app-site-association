@@ -1,0 +1,12 @@
+{
+  "applinks": {
+    "details": [
+      {
+        "appIDs": ["TEAMID.com.example.pushshell"],
+        "components": [
+          { "/": "*" }
+        ]
+      }
+    ]
+  }
+}

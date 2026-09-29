@@ -22,9 +22,11 @@ pushshell が今後備えていくべき機能を、おおよその優先度順�
    resolve し `error` で reject する `pushshell.login(id, token)`、`isNative()` 判定、型付き
    イベント購読を提供します。同時に `ready` イベントに `protocolVersion` を入れて互換性を
    管理できるようにします。
-3. ⬜ **Universal Links / App Links 対応**。通知の `url` は WebView 内で開けますが、メールや
-   SNS の `https://example.com/...` リンクからアプリが立ち上がりません。`ASSOCIATED_DOMAINS`
-   を env で受け、`apple-app-site-association` / `assetlinks.json` の公開手順まで文書化します。
+3. ✅ **Universal Links / App Links 対応**。メールや SNS の `https://example.com/...` リンク
+   からアプリが立ち上がり、WebView 内でそのページを開くようになりました。`ASSOCIATED_DOMAINS`
+   を env で受けて (opt-in) `ios.associatedDomains` と Android の `intentFilters` を設定し、
+   指定ドメインは `ALLOWED_ORIGINS` にも自動で追加されます。`apple-app-site-association` /
+   `assetlinks.json` のテンプレートと公開手順は `examples/well-known/` にあります。
 4. ⬜ **通知の宛先とオプションの拡張**。現状は `loginIds` 宛のみで、TTL / 優先度 / collapse
    key / 画像 / サイレント (data-only) / iOS の `threadId` や `interruptionLevel` がありません。
    `installationIds` 直指定、platform や locale による絞り込み、全端末ブロードキャスト、topic

@@ -3,8 +3,9 @@ import * as Notifications from "expo-notifications";
 import type { RefObject } from "react";
 import type WebView from "react-native-webview";
 
-import { injectNativeEvent, isAllowedOrigin } from "./bridge";
+import { injectNativeEvent } from "./bridge";
 import { config } from "./config";
+import { navigateWebViewTo } from "./webviewNavigation";
 
 /**
  * 通知タップのハンドリング。
@@ -23,8 +24,8 @@ export function useNotificationNavigation(webViewRef: RefObject<WebView | null>)
       if (!webView) return;
 
       const url = typeof data.url === "string" ? data.url : undefined;
-      if (url && isAllowedOrigin(url, config.allowedOrigins)) {
-        webView.injectJavaScript(`window.location.href = ${JSON.stringify(url)}; true;`);
+      if (url) {
+        navigateWebViewTo(webView, url, config.allowedOrigins);
       }
       webView.injectJavaScript(injectNativeEvent({ type: "notification", data }));
     }

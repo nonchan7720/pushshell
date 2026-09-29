@@ -45,6 +45,7 @@ import {
   getPushTokens,
   type PushTokens,
 } from "./src/notifications";
+import { useDeepLinkNavigation } from "./src/useDeepLinkNavigation";
 import { useNotificationNavigation } from "./src/useNotificationNavigation";
 
 // ネイティブの Splash Screen は WebView が最初のロードを終えるまで表示し続ける。
@@ -63,12 +64,16 @@ export default function App() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const [needsResync, setNeedsResync] = useState(false);
+  // 直近のロードが失敗したか (onError / onHttpError で true、retry で false に戻す)。
+  const loadFailedRef = useRef(false);
 
   // login/logout 処理中に最新の logins を読みたいので ref にも保持する。
   const loginsRef = useRef<StoredLogin[]>([]);
   loginsRef.current = logins;
 
   useNotificationNavigation(webViewRef);
+  // Universal Links / App Links。コールドスタート時のリンクは初回ロード完了後に適用する。
+  const { applyPendingDeepLink } = useDeepLinkNavigation(webViewRef);
 
   // 初期化: installationId の確保、前回ログイン状態 (複数アカウント分) の復元。
   useEffect(() => {
@@ -281,18 +286,25 @@ export default function App() {
 
   const handleLoadEnd = useCallback(async () => {
     setLoading(false);
-    setLoadError(null);
     await SplashScreen.hideAsync().catch(() => {});
+    // react-native-webview は onError の直後に同期的に onLoadEnd を呼ぶ。state の更新は
+    // バッチされるためここで loadError を読んでも信頼できないので、ref で失敗を判定する。
+    // 失敗したロードでは ready の送信も保留中のディープリンクの適用も行わない
+    // (リンクを失わず、再読み込み後のロードで適用されるようにする)。
+    if (loadFailedRef.current) return;
     await sendReady();
-  }, [sendReady]);
+    applyPendingDeepLink();
+  }, [sendReady, applyPendingDeepLink]);
 
   const handleError = useCallback((event: WebViewErrorEvent) => {
+    loadFailedRef.current = true;
     setLoading(false);
     setLoadError(event.nativeEvent.description || "読み込みに失敗しました");
     SplashScreen.hideAsync().catch(() => {});
   }, []);
 
   const handleHttpError = useCallback((event: WebViewHttpErrorEvent) => {
+    loadFailedRef.current = true;
     setLoading(false);
     setLoadError(
       `HTTP ${event.nativeEvent.statusCode}: ${event.nativeEvent.description || "読み込みに失敗しました"}`,
@@ -301,6 +313,7 @@ export default function App() {
   }, []);
 
   const retry = useCallback(() => {
+    loadFailedRef.current = false;
     setLoadError(null);
     setLoading(true);
     setReloadKey((key) => key + 1);

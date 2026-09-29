@@ -7,6 +7,7 @@ export interface AppExtra {
   webappUrl: string;
   apiBaseUrl: string;
   allowedOrigins: string[];
+  associatedDomains: string[];
   appVersion: string;
   pushProvider: PushProvider;
   webviewAndroidLayerType?: WebViewLayerType;
@@ -35,6 +36,8 @@ export const config = {
   webappUrl: requireExtra(extra.webappUrl, "webappUrl"),
   apiBaseUrl: requireExtra(extra.apiBaseUrl, "apiBaseUrl"),
   allowedOrigins: extra.allowedOrigins ?? [],
+  // Universal Links / App Links として受け付けるホスト (未設定なら空)。
+  associatedDomains: extra.associatedDomains ?? [],
   appVersion: extra.appVersion ?? "1.0.0",
   pushProvider: (extra.pushProvider === "native" ? "native" : "expo") as PushProvider,
   webviewAndroidLayerType: (extra.webviewAndroidLayerType ?? "none") as WebViewLayerType,

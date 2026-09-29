@@ -169,8 +169,13 @@ fork ではなく **「Use this template」** で新しいリポジトリを作�
 | `APP_ICON` / `APP_ADAPTIVE_ICON_*` / `APP_SPLASH_*` | アイコンとスプラッシュ |
 | `IOS_BUNDLE_ID` / `ANDROID_PACKAGE` | バンドル ID |
 | `WEBAPP_URL` / `ALLOWED_ORIGINS` | 表示する URL と許可 origin |
+| `ASSOCIATED_DOMAINS` | Universal Links / App Links でアプリを開くホスト (カンマ区切り、既定は無効。許可 origin にも自動追加) |
 | `API_BASE_URL` | バックエンド URL |
 | `EAS_PROJECT_ID` | Expo Push Token に必要 |
+
+Universal Links / App Links を使うには、`ASSOCIATED_DOMAINS` の各ドメインの
+`https://<host>/.well-known/` に [`examples/well-known/`](examples/well-known/README.md) の
+テンプレートを配置してください。
 
 ## Android をローカルでビルド・実行する
 

@@ -83,10 +83,33 @@ const originOf = (url: string): string => {
   }
 };
 
-const ALLOWED_ORIGINS = (env("ALLOWED_ORIGINS") ?? originOf(WEBAPP_URL))
+// Universal Links (iOS) / App Links (Android) を受け付けるホスト (カンマ区切り、例:
+// `example.com,www.example.com`)。未設定なら何も設定せず、従来どおりの挙動になる (opt-in)。
+// スキーム・パス・ポートを含まない素のホスト名だけを受け付ける。
+const HOST_PATTERN = /^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*$/;
+const ASSOCIATED_DOMAINS = (env("ASSOCIATED_DOMAINS") ?? "")
   .split(",")
-  .map((origin) => origin.trim())
-  .filter((origin) => origin.length > 0);
+  .map((host) => host.trim())
+  .filter((host) => host.length > 0);
+for (const host of ASSOCIATED_DOMAINS) {
+  if (!HOST_PATTERN.test(host)) {
+    throw new Error(
+      `ASSOCIATED_DOMAINS はスキーム・パス・ポートを含まないホスト名のカンマ区切りで指定してください (例: example.com,www.example.com) (got: ${host})`,
+    );
+  }
+}
+
+// associated domain は WebView で開くので、必ず許可 origin にも含める
+// (ALLOWED_ORIGINS を明示していても、WEBAPP_URL から導出していても自動で追加する)。
+const ALLOWED_ORIGINS = [
+  ...new Set([
+    ...(env("ALLOWED_ORIGINS") ?? originOf(WEBAPP_URL))
+      .split(",")
+      .map((origin) => origin.trim())
+      .filter((origin) => origin.length > 0),
+    ...ASSOCIATED_DOMAINS.map((host) => `https://${host}`),
+  ]),
+];
 
 export default ({ config }: ConfigContext): ExpoConfig => ({
   ...config,
@@ -104,6 +127,10 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     ...config.ios,
     bundleIdentifier: IOS_BUNDLE_ID,
     supportsTablet: true,
+    // Universal Links。ASSOCIATED_DOMAINS が空なら何も追加しない。
+    ...(ASSOCIATED_DOMAINS.length > 0
+      ? { associatedDomains: ASSOCIATED_DOMAINS.map((host) => `applinks:${host}`) }
+      : {}),
     infoPlist: {
       ...config.ios?.infoPlist,
       // バックグラウンドでのリモート通知受信を許可する。
@@ -121,6 +148,17 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
       ...(APP_ADAPTIVE_ICON_MONOCHROME ? { monochromeImage: APP_ADAPTIVE_ICON_MONOCHROME } : {}),
     },
     ...(GOOGLE_SERVICES_JSON ? { googleServicesFile: GOOGLE_SERVICES_JSON } : {}),
+    // App Links。ASSOCIATED_DOMAINS が空なら何も追加しない。
+    ...(ASSOCIATED_DOMAINS.length > 0
+      ? {
+          intentFilters: ASSOCIATED_DOMAINS.map((host) => ({
+            autoVerify: true,
+            action: "VIEW",
+            category: ["BROWSABLE", "DEFAULT"],
+            data: [{ scheme: "https", host }],
+          })),
+        }
+      : {}),
   },
   web: {
     ...config.web,
@@ -160,6 +198,7 @@ export default ({ config }: ConfigContext): ExpoConfig => ({
     webappUrl: WEBAPP_URL,
     apiBaseUrl: API_BASE_URL,
     allowedOrigins: ALLOWED_ORIGINS,
+    associatedDomains: ASSOCIATED_DOMAINS,
     appVersion: APP_VERSION,
     pushProvider: PUSH_PROVIDER,
     webviewAndroidLayerType: WEBVIEW_ANDROID_LAYER_TYPE,
