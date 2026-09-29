@@ -28,10 +28,12 @@ These are the changes with the best ratio of adoption gained to effort spent.
    configures `ios.associatedDomains` and the Android `intentFilters`, and every associated domain
    is added to `ALLOWED_ORIGINS` automatically. Templates and publishing instructions for
    `apple-app-site-association` and `assetlinks.json` live in `examples/well-known/`.
-4. ⬜ **Richer notification targeting and options.** Only `loginIds` can be targeted today, and
-   there is no TTL / priority / collapse key / image / silent (data-only) message / iOS
-   `threadId` / `interruptionLevel`. Add direct `installationIds`, filters by platform and
-   locale, broadcast to all devices, and topic subscriptions.
+4. 🚧 **Richer notification targeting and options.** `POST /v1/notifications` can now target
+   `loginIds`, direct `installationIds` (combinable, one message per device) or `broadcast` to
+   every device, narrowed by a platform / locale `filter`, and accepts `ttl`, `priority`,
+   `collapseKey`, `image`, `silent` (data-only), `subtitle`, `threadId` and `interruptionLevel`
+   (what each provider supports is documented in `backend/README.md`). **Topic subscriptions
+   remain**: they need a schema change (a new table) and will land in a separate PR.
 5. ⬜ **Web Push (VAPID) as a third platform.** Add `web` to `Platform` and a Web Push
    `push.Sender`, so the same `loginId` API reaches a PWA and the native apps alike.
 

@@ -116,6 +116,28 @@ request unknown GET /nope;                                                      
 request unlink DELETE /v1/devices/smoke-1/logins/u1;                              expect "unlink u1" 204
 request get2 GET /v1/devices/smoke-1 "${key[@]}";                                 expect "u1 gone, u2 stays" 200 '"loginIds":["u2"]'
 request unlinkall DELETE /v1/logins/u2 "${key[@]}";                               expect "unlink u2 everywhere (API key)" 200 '"removed":1'
+
+# Targeting by installationId / broadcast (smoke-1 is still registered here: an
+# android device with no login links left). Broadcast + loginIds is rejected
+# before anything is sent, so that check also holds for SMOKE_EXPO=1.
+request bcastmix POST /v1/notifications "${json[@]}" "${key[@]}" -d '{"broadcast":true,"loginIds":["u1"],"title":"t"}'
+                                                                                  expect "broadcast + loginIds -> 400" 400 '"code":"invalid_request"'
+request notarget POST /v1/notifications "${json[@]}" "${key[@]}" -d '{"title":"t"}'
+                                                                                  expect "no target -> 400" 400 '"code":"invalid_request"'
+if [ "$provider" = log ]; then
+  request notifyi POST /v1/notifications "${json[@]}" "${key[@]}" -d '{"installationIds":["smoke-1"],"title":"t","body":"b"}'
+                                                                                  expect "notify by installationIds" 200 '"requested":1' '"sent":1' '"loginIds":[]'
+  request notifyu POST /v1/notifications "${json[@]}" "${key[@]}" -d '{"installationIds":["nobody"],"title":"t"}'
+                                                                                  expect "notify unknown installationId" 200 '"requested":0' '"sent":0'
+  request bcasti POST /v1/notifications "${json[@]}" "${key[@]}" -d '{"broadcast":true,"filter":{"platforms":["ios"]},"title":"t"}'
+                                                                                  expect "broadcast, platform filter ios (device is android)" 200 '"requested":0'
+  request bcasta POST /v1/notifications "${json[@]}" "${key[@]}" -d '{"broadcast":true,"filter":{"platforms":["android"]},"title":"t"}'
+                                                                                  expect "broadcast, platform filter android" 200 '"requested":1' '"sent":1'
+  request silent POST /v1/notifications "${json[@]}" "${key[@]}" -d '{"installationIds":["smoke-1"],"silent":true,"ttl":60,"priority":"normal","data":{"k":"v"}}'
+                                                                                  expect "silent (data-only) push with ttl/priority" 200 '"requested":1' '"sent":1'
+  request badsilent POST /v1/notifications "${json[@]}" "${key[@]}" -d '{"installationIds":["smoke-1"],"silent":true,"title":"t"}'
+                                                                                  expect "silent with title -> 400" 400 '"code":"invalid_request"'
+fi
 request delete DELETE /v1/devices/smoke-1;                                        expect "delete device" 204
 request get3 GET /v1/devices/smoke-1 "${key[@]}";                                 expect "deleted device -> 404" 404 '"code":"not_found"'
 

@@ -144,13 +144,41 @@ func (s *server) SendNotification(ctx context.Context, req api.SendNotificationR
 	}
 	body := req.Body
 	in := core.SendInput{
-		LoginIDs:  body.LoginIds,
-		Title:     body.Title,
-		Body:      fromPtr(body.Body),
-		URL:       fromPtr(body.Url),
-		Sound:     fromPtr(body.Sound),
-		ChannelID: fromPtr(body.ChannelId),
-		Badge:     body.Badge,
+		LoginIDs:        derefSlice(body.LoginIds),
+		InstallationIDs: derefSlice(body.InstallationIds),
+		Broadcast:       body.Broadcast != nil && *body.Broadcast,
+		Title:           fromPtr(body.Title),
+		Body:            fromPtr(body.Body),
+		URL:             fromPtr(body.Url),
+		Sound:           fromPtr(body.Sound),
+		ChannelID:       fromPtr(body.ChannelId),
+		Badge:           body.Badge,
+
+		TTLSeconds:  body.Ttl,
+		CollapseKey: fromPtr(body.CollapseKey),
+		Image:       fromPtr(body.Image),
+		Silent:      body.Silent != nil && *body.Silent,
+		Subtitle:    fromPtr(body.Subtitle),
+		ThreadID:    fromPtr(body.ThreadId),
+	}
+	if body.Priority != nil {
+		in.Priority = string(*body.Priority)
+	}
+	if body.InterruptionLevel != nil {
+		in.InterruptionLevel = string(*body.InterruptionLevel)
+	}
+	if body.Filter != nil {
+		if body.Filter.Platforms != nil {
+			// A non-nil (possibly empty) slice tells core the field was set, so
+			// it can reject e.g. "platforms": [] like the OpenAPI minItems does.
+			in.Filter.Platforms = make([]string, len(*body.Filter.Platforms))
+			for i, p := range *body.Filter.Platforms {
+				in.Filter.Platforms[i] = string(p)
+			}
+		}
+		if body.Filter.Locales != nil {
+			in.Filter.LocalePrefixes = append([]string{}, *body.Filter.Locales...)
+		}
 	}
 	if body.Data != nil {
 		in.Data = *body.Data
@@ -218,6 +246,13 @@ func toAPISendResult(r core.SendResult) api.SendNotificationResult {
 		Failed:    r.Failed,
 		Results:   results,
 	}
+}
+
+func derefSlice[T any](s *[]T) []T {
+	if s == nil {
+		return nil
+	}
+	return *s
 }
 
 func fromPtr(s *string) string {

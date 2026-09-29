@@ -14,9 +14,11 @@ import (
 	"math/big"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // newTestAPNSServer starts an httptest HTTPS server with HTTP/2 enabled,
@@ -376,5 +378,125 @@ func TestNewAPNSSender_ParsesP8AndSetsEndpoint(t *testing.T) {
 	}
 	if sandbox.Endpoint != apnsSandboxHost {
 		t.Fatalf("unexpected sandbox endpoint: %q", sandbox.Endpoint)
+	}
+}
+
+// apnsCapture is what apnsRoundTrip's test server saw for the one request.
+type apnsCapture struct {
+	headers http.Header
+	body    map[string]any
+}
+
+// apnsRoundTrip sends m through an APNSSender (with a fixed clock) against a
+// test server and returns the request headers and decoded JSON body.
+func apnsRoundTrip(t *testing.T, m Message) apnsCapture {
+	t.Helper()
+	var got apnsCapture
+	srv := newTestAPNSServer(t, func(w http.ResponseWriter, r *http.Request) {
+		got.headers = r.Header.Clone()
+		b, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("read body: %v", err)
+		}
+		if err := json.Unmarshal(b, &got.body); err != nil {
+			t.Errorf("decode payload: %v (body: %s)", err, b)
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+	s := newTestAPNSSender(t, srv, newTestAPNSKey(t))
+	s.now = func() time.Time { return time.Unix(1_700_000_000, 0) }
+	res, err := s.Send(context.Background(), []Message{m})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res) != 1 || !res[0].OK || got.headers == nil {
+		t.Fatalf("unexpected result: %+v", res)
+	}
+	return got
+}
+
+func TestAPNSSender_Send_Options(t *testing.T) {
+	ttl := 3600
+	badge := 4
+	got := apnsRoundTrip(t, Message{
+		Platform: "ios", DeviceToken: "abc123", Title: "t", Body: "b", Sound: "default", Badge: &badge,
+		TTLSeconds: &ttl, Priority: "normal", CollapseKey: "news", Image: "https://example.com/ignored.png",
+		Subtitle: "sub", ThreadID: "thread-1", InterruptionLevel: "time-sensitive",
+		Data: map[string]any{"url": "https://x"},
+	})
+	wantHeaders := map[string]string{
+		"apns-push-type":   "alert",
+		"apns-priority":    "5",
+		"apns-expiration":  "1700003600", // now (1700000000) + ttl
+		"apns-collapse-id": "news",
+	}
+	for k, v := range wantHeaders {
+		if h := got.headers.Get(k); h != v {
+			t.Errorf("header %s: got %q want %q", k, h, v)
+		}
+	}
+	want := map[string]any{
+		"aps": map[string]any{
+			"alert":              map[string]any{"title": "t", "body": "b", "subtitle": "sub"},
+			"sound":              "default",
+			"badge":              float64(4),
+			"thread-id":          "thread-1",
+			"interruption-level": "time-sensitive",
+		},
+		"url": "https://x",
+	}
+	if !reflect.DeepEqual(got.body, want) {
+		t.Fatalf("unexpected payload:\n got %v\nwant %v", got.body, want)
+	}
+}
+
+func TestAPNSSender_Send_Silent(t *testing.T) {
+	got := apnsRoundTrip(t, Message{
+		Platform: "ios", DeviceToken: "abc123", Silent: true, Priority: "high", // Apple requires 5 for background
+		Data: map[string]any{"k": "v"},
+	})
+	if h := got.headers.Get("apns-push-type"); h != "background" {
+		t.Errorf("apns-push-type: %q", h)
+	}
+	if h := got.headers.Get("apns-priority"); h != "5" {
+		t.Errorf("apns-priority: %q", h)
+	}
+	for _, k := range []string{"apns-expiration", "apns-collapse-id"} {
+		if h := got.headers.Get(k); h != "" {
+			t.Errorf("header %s should be unset, got %q", k, h)
+		}
+	}
+	want := map[string]any{
+		"aps": map[string]any{"content-available": float64(1)},
+		"k":   "v",
+	}
+	if !reflect.DeepEqual(got.body, want) {
+		t.Fatalf("unexpected payload:\n got %v\nwant %v", got.body, want)
+	}
+}
+
+// TestAPNSSender_Send_NoOptionsUnchanged pins headers and payload for a
+// message without any of the option fields (they must not change).
+func TestAPNSSender_Send_NoOptionsUnchanged(t *testing.T) {
+	got := apnsRoundTrip(t, Message{Platform: "ios", DeviceToken: "abc123", Title: "t", Body: "b"})
+	if got.headers.Get("apns-push-type") != "alert" || got.headers.Get("apns-priority") != "10" {
+		t.Errorf("unexpected headers: %v", got.headers)
+	}
+	for _, k := range []string{"apns-expiration", "apns-collapse-id"} {
+		if h := got.headers.Get(k); h != "" {
+			t.Errorf("header %s should be unset, got %q", k, h)
+		}
+	}
+	want := map[string]any{"aps": map[string]any{"alert": map[string]any{"title": "t", "body": "b"}}}
+	if !reflect.DeepEqual(got.body, want) {
+		t.Fatalf("unexpected payload:\n got %v\nwant %v", got.body, want)
+	}
+}
+
+func TestAPNSSender_Send_TTLZero(t *testing.T) {
+	zero := 0
+	got := apnsRoundTrip(t, Message{Platform: "ios", DeviceToken: "abc123", Title: "t", TTLSeconds: &zero})
+	if h := got.headers.Get("apns-expiration"); h != "0" {
+		t.Errorf("apns-expiration for ttl 0: %q", h)
 	}
 }

@@ -27,10 +27,12 @@ pushshell が今後備えていくべき機能を、おおよその優先度順�
    を env で受けて (opt-in) `ios.associatedDomains` と Android の `intentFilters` を設定し、
    指定ドメインは `ALLOWED_ORIGINS` にも自動で追加されます。`apple-app-site-association` /
    `assetlinks.json` のテンプレートと公開手順は `examples/well-known/` にあります。
-4. ⬜ **通知の宛先とオプションの拡張**。現状は `loginIds` 宛のみで、TTL / 優先度 / collapse
-   key / 画像 / サイレント (data-only) / iOS の `threadId` や `interruptionLevel` がありません。
-   `installationIds` 直指定、platform や locale による絞り込み、全端末ブロードキャスト、topic
-   購読を追加します。
+4. 🚧 **通知の宛先とオプションの拡張**。`POST /v1/notifications` は `loginIds` に加えて
+   `installationIds` の直指定 (併用可、1 端末 1 通に重複排除)、全端末への `broadcast` を
+   受け付け、platform / locale の `filter` で絞り込めるようになりました。また `ttl` /
+   `priority` / `collapseKey` / `image` / `silent` (data-only) / `subtitle` / `threadId` /
+   `interruptionLevel` を指定できます (プロバイダごとの対応状況は `backend/README.md`)。
+   **topic 購読は未実装**です。スキーマ変更 (新テーブル) が必要なので別の PR で行います。
 5. ⬜ **Web Push (VAPID) を第 3 のプラットフォームに**。`Platform` に `web` を足し、Web Push
    の `push.Sender` を追加して、同じ `loginId` API で PWA とネイティブアプリの両方に届くように
    します。

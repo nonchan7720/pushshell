@@ -33,6 +33,19 @@ type expoMessage struct {
 	Sound     string         `json:"sound,omitempty"`
 	Badge     *int           `json:"badge,omitempty"`
 	ChannelID string         `json:"channelId,omitempty"`
+
+	// 以下は Message の配信オプション (未指定なら JSON に出ない)。
+	TTL               *int      `json:"ttl,omitempty"`
+	Priority          string    `json:"priority,omitempty"`
+	RichContent       *expoRich `json:"richContent,omitempty"`
+	ContentAvailable  bool      `json:"_contentAvailable,omitempty"`
+	Subtitle          string    `json:"subtitle,omitempty"`
+	InterruptionLevel string    `json:"interruptionLevel,omitempty"`
+}
+
+// expoRich は Expo の richContent (現在は画像のみ)。
+type expoRich struct {
+	Image string `json:"image,omitempty"`
 }
 
 type expoTicket struct {
@@ -90,15 +103,7 @@ func (s *ExpoSender) sendBatch(ctx context.Context, messages []Message) ([]Resul
 
 	payload := make([]expoMessage, len(targets))
 	for i, t := range targets {
-		payload[i] = expoMessage{
-			To:        t.msg.ExpoToken,
-			Title:     t.msg.Title,
-			Body:      t.msg.Body,
-			Data:      t.msg.Data,
-			Sound:     t.msg.Sound,
-			Badge:     t.msg.Badge,
-			ChannelID: t.msg.ChannelID,
-		}
+		payload[i] = buildExpoMessage(t.msg)
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -163,6 +168,36 @@ func (s *ExpoSender) sendBatch(ctx context.Context, messages []Message) ([]Resul
 		results[idx] = r
 	}
 	return results, nil
+}
+
+// buildExpoMessage は Message を Expo の 1 通分のペイロードにする。
+// CollapseKey / ThreadID は Expo が対応していないため無視する。
+// Silent のときは title / body / sound / badge を送らず (Data のみ)、
+// _contentAvailable: true を付ける。
+func buildExpoMessage(m Message) expoMessage {
+	em := expoMessage{
+		To:                m.ExpoToken,
+		Title:             m.Title,
+		Body:              m.Body,
+		Data:              m.Data,
+		Sound:             m.Sound,
+		Badge:             m.Badge,
+		ChannelID:         m.ChannelID,
+		TTL:               m.TTLSeconds,
+		Priority:          m.Priority,
+		Subtitle:          m.Subtitle,
+		InterruptionLevel: m.InterruptionLevel,
+	}
+	if m.Image != "" {
+		em.RichContent = &expoRich{Image: m.Image}
+	}
+	if m.Silent {
+		em.Title, em.Body, em.Sound, em.Badge = "", "", "", nil
+		em.Subtitle = ""
+		em.RichContent = nil
+		em.ContentAvailable = true
+	}
+	return em
 }
 
 func truncate(b []byte, n int) string {

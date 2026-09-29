@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -360,5 +361,93 @@ func TestNewFCMSender_MissingProjectID(t *testing.T) {
 func TestNewFCMSender_InvalidJSON(t *testing.T) {
 	if _, err := NewFCMSender([]byte("not json"), "p"); err == nil {
 		t.Fatal("expected error for invalid JSON")
+	}
+}
+
+// fcmRawPayload runs one Message through an FCMSender against a test server
+// and returns the decoded "message" object the server received.
+func fcmRawPayload(t *testing.T, m Message) map[string]any {
+	t.Helper()
+	var got struct {
+		Message map[string]any `json:"message"`
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Errorf("decode: %v", err)
+		}
+		_, _ = w.Write([]byte(`{"name":"projects/p/messages/1"}`))
+	}))
+	defer srv.Close()
+
+	s := &FCMSender{ProjectID: "p", TokenSource: fakeTokenSource{accessToken: "secret"}, Endpoint: srv.URL}
+	res, err := s.Send(context.Background(), []Message{m})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res) != 1 || !res[0].OK || got.Message == nil {
+		t.Fatalf("unexpected result %+v / payload %+v", res, got)
+	}
+	return got.Message
+}
+
+func TestFCMSender_Send_Options(t *testing.T) {
+	ttl := 3600
+	got := fcmRawPayload(t, Message{
+		Platform: "android", DeviceToken: "device-1", Title: "t", Body: "b", ChannelID: "default", Sound: "default",
+		TTLSeconds: &ttl, Priority: "normal", CollapseKey: "news", Image: "https://example.com/a.png",
+		Subtitle: "ignored", ThreadID: "ignored", InterruptionLevel: "critical",
+		Data: map[string]any{"k": "v"},
+	})
+	want := map[string]any{
+		"token":        "device-1",
+		"notification": map[string]any{"title": "t", "body": "b", "image": "https://example.com/a.png"},
+		"data":         map[string]any{"k": "v"},
+		"android": map[string]any{
+			"priority": "normal", "ttl": "3600s", "collapse_key": "news",
+			"notification": map[string]any{"channel_id": "default", "sound": "default"},
+		},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected payload:\n got %v\nwant %v", got, want)
+	}
+}
+
+func TestFCMSender_Send_Silent(t *testing.T) {
+	ttl := 0
+	got := fcmRawPayload(t, Message{
+		Platform: "android", DeviceToken: "device-1", Silent: true, TTLSeconds: &ttl, CollapseKey: "sync",
+		ChannelID: "default", Data: map[string]any{"k": "v"},
+	})
+	want := map[string]any{
+		"token": "device-1",
+		"data":  map[string]any{"k": "v"},
+		"android": map[string]any{
+			"priority": "high", "ttl": "0s", "collapse_key": "sync",
+		},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected payload:\n got %v\nwant %v", got, want)
+	}
+}
+
+// TestFCMSender_Send_NoOptionsPayloadUnchanged pins the payload for a
+// message without any of the option fields (it must not gain new keys).
+func TestFCMSender_Send_NoOptionsPayloadUnchanged(t *testing.T) {
+	got := fcmRawPayload(t, Message{DeviceToken: "device-1", Title: "t", Body: "b"})
+	want := map[string]any{
+		"token":        "device-1",
+		"notification": map[string]any{"title": "t", "body": "b"},
+		"android":      map[string]any{"priority": "high"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected payload:\n got %v\nwant %v", got, want)
+	}
+}
+
+func TestFCMSender_Send_ExplicitHighPriority(t *testing.T) {
+	got := fcmRawPayload(t, Message{DeviceToken: "device-1", Title: "t", Priority: "high"})
+	android, _ := got["android"].(map[string]any)
+	if android["priority"] != "high" {
+		t.Fatalf("unexpected android config: %v", android)
 	}
 }

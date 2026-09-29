@@ -5,7 +5,9 @@ import (
 	"errors"
 	"log/slog"
 	"reflect"
+	"slices"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/nonchan7720/pushshell/backend/internal/core"
@@ -138,6 +140,50 @@ func (s *fakeStore) FindDevicesByLogins(_ context.Context, loginIDs []string) ([
 	return out, nil
 }
 
+func (s *fakeStore) FindDevicesByInstallationIDs(_ context.Context, installationIDs []string) ([]core.Device, error) {
+	want := map[string]bool{}
+	for _, id := range installationIDs {
+		want[id] = true
+	}
+	return s.listSorted(func(d *core.Device) bool { return want[d.InstallationID] }), nil
+}
+
+// ListDevices mimics the Store contract: a plain (not tag-boundary)
+// case-insensitive locale prefix pre-filter, so the tests below also show
+// Service.Send re-applying the exact rule.
+func (s *fakeStore) ListDevices(_ context.Context, filter core.DeviceFilter) ([]core.Device, error) {
+	return s.listSorted(func(d *core.Device) bool {
+		if len(filter.Platforms) > 0 && !slices.Contains(filter.Platforms, d.Platform) {
+			return false
+		}
+		if len(filter.LocalePrefixes) > 0 {
+			ok := false
+			for _, p := range filter.LocalePrefixes {
+				if d.Locale != "" && strings.HasPrefix(strings.ToLower(d.Locale), strings.ToLower(p)) {
+					ok = true
+				}
+			}
+			if !ok {
+				return false
+			}
+		}
+		return true
+	}), nil
+}
+
+func (s *fakeStore) listSorted(keep func(*core.Device) bool) []core.Device {
+	var out []core.Device
+	for installationID, d := range s.devices {
+		if keep(d) {
+			cp := *d
+			cp.LoginIDs = s.sortedLogins(installationID)
+			out = append(out, cp)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
+}
+
 func (s *fakeStore) sortedLogins(installationID string) []string {
 	set := s.links[installationID]
 	out := make([]string, 0, len(set))
@@ -176,9 +222,14 @@ func newTestService(sender push.Sender) (*core.Service, *fakeStore) {
 
 func createDevice(t *testing.T, store *fakeStore, installationID, platform, pushToken string, loginIDs ...string) {
 	t.Helper()
+	createDeviceWithLocale(t, store, installationID, platform, pushToken, "", loginIDs...)
+}
+
+func createDeviceWithLocale(t *testing.T, store *fakeStore, installationID, platform, pushToken, locale string, loginIDs ...string) {
+	t.Helper()
 	ctx := context.Background()
 	if _, err := store.UpsertDevice(ctx, core.DeviceInput{
-		InstallationID: installationID, Platform: platform, PushToken: pushToken,
+		InstallationID: installationID, Platform: platform, PushToken: pushToken, Locale: locale,
 	}); err != nil {
 		t.Fatalf("seed device: %v", err)
 	}
@@ -518,11 +569,363 @@ func TestService_Send_Validation(t *testing.T) {
 		{LoginIDs: nil, Title: "x"},
 		{LoginIDs: []string{"u1"}, Title: ""},
 		{LoginIDs: []string{"u1"}, Title: "x", URL: "not-a-url"},
+		{LoginIDs: []string{"u1", ""}, Title: "x"},
 	}
 	for i, in := range cases {
 		if _, err := svc.Send(ctx, in); !errors.As(err, new(core.ErrInvalidInput)) {
 			t.Fatalf("case %d: expected ErrInvalidInput, got %v", i, err)
 		}
+	}
+}
+
+// requireInvalid checks that Send rejects in with an ErrInvalidInput whose
+// message contains want.
+func requireInvalid(t *testing.T, svc *core.Service, in core.SendInput, want string) {
+	t.Helper()
+	_, err := svc.Send(context.Background(), in)
+	var inv core.ErrInvalidInput
+	if !errors.As(err, &inv) {
+		t.Fatalf("expected ErrInvalidInput containing %q, got %v", want, err)
+	}
+	if !strings.Contains(inv.Message, want) {
+		t.Fatalf("expected error containing %q, got %q", want, inv.Message)
+	}
+}
+
+func TestService_Send_TargetValidation(t *testing.T) {
+	sender := &fakeSender{}
+	svc, _ := newTestService(sender)
+
+	requireInvalid(t, svc, core.SendInput{Title: "x"}, "at least one of loginIds, installationIds or broadcast")
+	requireInvalid(t, svc, core.SendInput{Title: "x", Broadcast: false, Filter: core.DeviceFilter{Platforms: []string{"ios"}}},
+		"at least one of loginIds, installationIds or broadcast")
+	requireInvalid(t, svc, core.SendInput{Title: "x", Broadcast: true, LoginIDs: []string{"u1"}}, "broadcast cannot be combined")
+	requireInvalid(t, svc, core.SendInput{Title: "x", Broadcast: true, InstallationIDs: []string{"a"}}, "broadcast cannot be combined")
+	requireInvalid(t, svc, core.SendInput{Title: "x", InstallationIDs: []string{"a", ""}}, "installationIds must not contain empty strings")
+	requireInvalid(t, svc, core.SendInput{Title: "x", InstallationIDs: []string{strings.Repeat("a", 129)}}, "installationIds items must be at most 128")
+	requireInvalid(t, svc, core.SendInput{Title: "x", InstallationIDs: make([]string, 1001)}, "installationIds must have at most 1000")
+	requireInvalid(t, svc, core.SendInput{Title: "x", Broadcast: true, Filter: core.DeviceFilter{Platforms: []string{"windows"}}}, "filter.platforms")
+	requireInvalid(t, svc, core.SendInput{Title: "x", Broadcast: true, Filter: core.DeviceFilter{Platforms: []string{"ios", "android", "ios"}}}, "filter.platforms must have 1 to 2 items")
+	requireInvalid(t, svc, core.SendInput{Title: "x", Broadcast: true, Filter: core.DeviceFilter{Platforms: []string{}}}, "filter.platforms must have 1 to 2 items")
+	requireInvalid(t, svc, core.SendInput{Title: "x", Broadcast: true, Filter: core.DeviceFilter{LocalePrefixes: []string{"ja", ""}}}, "filter.locales must not contain empty strings")
+	requireInvalid(t, svc, core.SendInput{Title: "x", Broadcast: true, Filter: core.DeviceFilter{LocalePrefixes: []string{strings.Repeat("a", 33)}}}, "filter.locales items must be at most 32")
+	requireInvalid(t, svc, core.SendInput{Title: "x", Broadcast: true, Filter: core.DeviceFilter{LocalePrefixes: make([]string, 51)}}, "filter.locales must have 1 to 50 items")
+	requireInvalid(t, svc, core.SendInput{Title: "", Broadcast: true}, "title is required")
+
+	if len(sender.sent) != 0 {
+		t.Fatalf("nothing should have been sent, got %+v", sender.sent)
+	}
+}
+
+func TestService_Send_InstallationIDs(t *testing.T) {
+	sender := &fakeSender{}
+	svc, store := newTestService(sender)
+	ctx := context.Background()
+
+	createDevice(t, store, "a", "ios", "tok-a", "u1")
+	createDevice(t, store, "b", "android", "tok-b")
+	createDevice(t, store, "c", "ios", "tok-c", "u2")
+
+	res, err := svc.Send(ctx, core.SendInput{InstallationIDs: []string{"c", "unknown", "b"}, Title: "hello"})
+	if err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	if res.Requested != 2 || res.Sent != 2 || res.Failed != 0 {
+		t.Fatalf("unexpected counts: %+v", res)
+	}
+	// Ordered by device ID ascending, not by request order.
+	if got := []string{res.Results[0].InstallationID, res.Results[1].InstallationID}; !reflect.DeepEqual(got, []string{"b", "c"}) {
+		t.Fatalf("unexpected order: %v", got)
+	}
+	for _, dr := range res.Results {
+		if len(dr.LoginIDs) != 0 {
+			t.Fatalf("installationIds-only targets must not report loginIds: %+v", dr)
+		}
+	}
+	if len(sender.sent) != 1 || len(sender.sent[0]) != 2 || sender.sent[0][0].ExpoToken != "tok-b" || sender.sent[0][1].ExpoToken != "tok-c" {
+		t.Fatalf("unexpected messages: %+v", sender.sent)
+	}
+}
+
+// TestService_Send_LoginIDsAndInstallationIDsUnion checks that combining both
+// targets yields the union with one message per device, and that
+// DeliveryResult.LoginIDs only lists login IDs from the loginIds path.
+func TestService_Send_LoginIDsAndInstallationIDsUnion(t *testing.T) {
+	sender := &fakeSender{}
+	svc, store := newTestService(sender)
+	ctx := context.Background()
+
+	createDevice(t, store, "shared", "ios", "tok-shared", "u1", "u2") // via loginIds AND installationIds
+	createDevice(t, store, "by-login", "ios", "tok-login", "u2")
+	createDevice(t, store, "by-inst", "android", "tok-inst", "someone-else") // logins not requested
+	createDevice(t, store, "unrelated", "android", "tok-unrelated", "u3")
+
+	res, err := svc.Send(ctx, core.SendInput{
+		LoginIDs:        []string{"u1", "u2"},
+		InstallationIDs: []string{"by-inst", "shared"},
+		Title:           "hello",
+	})
+	if err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	if res.Requested != 3 || res.Sent != 3 {
+		t.Fatalf("unexpected counts: %+v", res)
+	}
+	if len(sender.sent) != 1 || len(sender.sent[0]) != 3 {
+		t.Fatalf("expected exactly one message per device (3 total), got %+v", sender.sent)
+	}
+	want := []core.DeliveryResult{
+		{InstallationID: "shared", LoginIDs: []string{"u1", "u2"}, Status: "ok"},
+		{InstallationID: "by-login", LoginIDs: []string{"u2"}, Status: "ok"},
+		{InstallationID: "by-inst", Status: "ok"},
+	}
+	if len(res.Results) != len(want) {
+		t.Fatalf("unexpected results: %+v", res.Results)
+	}
+	for i, w := range want {
+		g := res.Results[i]
+		g.LoginIDs = sortedStrings(g.LoginIDs)
+		if g.InstallationID != w.InstallationID || g.Status != w.Status || !slices.Equal(g.LoginIDs, w.LoginIDs) {
+			t.Fatalf("result %d: got %+v want %+v", i, g, w)
+		}
+	}
+}
+
+func TestService_Send_BroadcastFilterPlatform(t *testing.T) {
+	sender := &fakeSender{}
+	svc, store := newTestService(sender)
+	ctx := context.Background()
+
+	createDevice(t, store, "i1", "ios", "tok-i1", "u1")
+	createDevice(t, store, "a1", "android", "tok-a1")
+	createDevice(t, store, "i2", "ios", "tok-i2")
+
+	all, err := svc.Send(ctx, core.SendInput{Broadcast: true, Title: "hello"})
+	if err != nil {
+		t.Fatalf("broadcast: %v", err)
+	}
+	if all.Requested != 3 || all.Sent != 3 {
+		t.Fatalf("unexpected broadcast counts: %+v", all)
+	}
+	// Broadcast reaches devices that have no login at all; LoginIDs stays
+	// empty even for a device that is linked to a login.
+	for _, dr := range all.Results {
+		if len(dr.LoginIDs) != 0 {
+			t.Fatalf("broadcast results must not report loginIds: %+v", dr)
+		}
+	}
+
+	sender.sent = nil
+	ios, err := svc.Send(ctx, core.SendInput{
+		Broadcast: true, Title: "hello", Filter: core.DeviceFilter{Platforms: []string{"ios"}},
+	})
+	if err != nil {
+		t.Fatalf("broadcast ios: %v", err)
+	}
+	if ios.Requested != 2 || ios.Results[0].InstallationID != "i1" || ios.Results[1].InstallationID != "i2" {
+		t.Fatalf("unexpected ios results: %+v", ios)
+	}
+	if len(sender.sent) != 1 || len(sender.sent[0]) != 2 {
+		t.Fatalf("unexpected messages: %+v", sender.sent)
+	}
+
+	none, err := svc.Send(ctx, core.SendInput{
+		Broadcast: true, Title: "hello", Filter: core.DeviceFilter{Platforms: []string{"android"}, LocalePrefixes: []string{"ja"}},
+	})
+	if err != nil {
+		t.Fatalf("broadcast none: %v", err)
+	}
+	if none.Requested != 0 || len(none.Results) != 0 {
+		t.Fatalf("expected no targets, got %+v", none)
+	}
+}
+
+func TestService_Send_BroadcastFilterLocale(t *testing.T) {
+	sender := &fakeSender{}
+	svc, store := newTestService(sender)
+	ctx := context.Background()
+
+	createDeviceWithLocale(t, store, "ja", "ios", "t1", "ja")
+	createDeviceWithLocale(t, store, "ja-jp", "ios", "t2", "ja-JP")
+	createDeviceWithLocale(t, store, "jav", "ios", "t3", "jav") // Javanese: must not match "ja"
+	createDeviceWithLocale(t, store, "en-us", "android", "t4", "en-US")
+	createDeviceWithLocale(t, store, "ja-jp-x", "android", "t5", "ja-JP-u-ca-japanese")
+	createDeviceWithLocale(t, store, "none", "android", "t6", "")
+
+	sendTo := func(prefixes ...string) []string {
+		t.Helper()
+		res, err := svc.Send(ctx, core.SendInput{
+			Broadcast: true, Title: "hello", Filter: core.DeviceFilter{LocalePrefixes: prefixes},
+		})
+		if err != nil {
+			t.Fatalf("send %v: %v", prefixes, err)
+		}
+		var ids []string
+		for _, dr := range res.Results {
+			ids = append(ids, dr.InstallationID)
+		}
+		return ids
+	}
+
+	if got := sendTo("ja"); !slices.Equal(got, []string{"ja", "ja-jp", "ja-jp-x"}) {
+		t.Fatalf("prefix ja: got %v", got)
+	}
+	if got := sendTo("JA-jp"); !slices.Equal(got, []string{"ja-jp", "ja-jp-x"}) {
+		t.Fatalf("prefix ja-JP (case-insensitive): got %v", got)
+	}
+	if got := sendTo("ja-JP-u-ca-japanese"); !slices.Equal(got, []string{"ja-jp-x"}) {
+		t.Fatalf("full tag: got %v", got)
+	}
+	if got := sendTo("jav"); !slices.Equal(got, []string{"jav"}) {
+		t.Fatalf("prefix jav: got %v", got)
+	}
+	if got := sendTo("en", "jav"); !slices.Equal(got, []string{"jav", "en-us"}) {
+		t.Fatalf("prefixes en,jav: got %v", got)
+	}
+	if got := sendTo("j"); len(got) != 0 {
+		t.Fatalf("prefix j is not a tag prefix, got %v", got)
+	}
+
+	// The filter is also applied to loginIds / installationIds targets, and
+	// a device with an empty locale never matches a locale filter.
+	res, err := svc.Send(ctx, core.SendInput{
+		InstallationIDs: []string{"ja", "jav", "none"}, Title: "hello",
+		Filter: core.DeviceFilter{LocalePrefixes: []string{"ja"}},
+	})
+	if err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	if res.Requested != 1 || res.Results[0].InstallationID != "ja" {
+		t.Fatalf("unexpected filtered installationIds result: %+v", res)
+	}
+}
+
+func TestMatchesFilter(t *testing.T) {
+	d := func(platform, locale string) core.Device { return core.Device{Platform: platform, Locale: locale} }
+	cases := []struct {
+		name string
+		dev  core.Device
+		f    core.DeviceFilter
+		want bool
+	}{
+		{"empty filter matches anything", d("ios", ""), core.DeviceFilter{}, true},
+		{"platform match", d("ios", ""), core.DeviceFilter{Platforms: []string{"ios"}}, true},
+		{"platform mismatch", d("ios", ""), core.DeviceFilter{Platforms: []string{"android"}}, false},
+		{"either platform", d("ios", ""), core.DeviceFilter{Platforms: []string{"android", "ios"}}, true},
+		{"empty locale", d("ios", ""), core.DeviceFilter{LocalePrefixes: []string{"ja"}}, false},
+		{"exact", d("ios", "ja"), core.DeviceFilter{LocalePrefixes: []string{"ja"}}, true},
+		{"region", d("ios", "ja-JP"), core.DeviceFilter{LocalePrefixes: []string{"ja"}}, true},
+		{"not a tag boundary", d("ios", "jav"), core.DeviceFilter{LocalePrefixes: []string{"ja"}}, false},
+		{"region prefix vs bare language", d("ios", "ja"), core.DeviceFilter{LocalePrefixes: []string{"ja-JP"}}, false},
+		{"case insensitive", d("ios", "JA-jp"), core.DeviceFilter{LocalePrefixes: []string{"ja-JP"}}, true},
+		{"platform and locale both required", d("android", "ja-JP"), core.DeviceFilter{Platforms: []string{"ios"}, LocalePrefixes: []string{"ja"}}, false},
+	}
+	for _, c := range cases {
+		if got := core.MatchesFilter(c.dev, c.f); got != c.want {
+			t.Errorf("%s: got %v want %v", c.name, got, c.want)
+		}
+	}
+}
+
+func TestService_Send_SilentValidation(t *testing.T) {
+	sender := &fakeSender{}
+	svc, _ := newTestService(sender)
+	const msg = "silent notifications carry data only"
+
+	base := core.SendInput{LoginIDs: []string{"u1"}, Silent: true}
+	badge := 1
+	for name, in := range map[string]core.SendInput{
+		"title":    {LoginIDs: base.LoginIDs, Silent: true, Title: "t"},
+		"body":     {LoginIDs: base.LoginIDs, Silent: true, Body: "b"},
+		"sound":    {LoginIDs: base.LoginIDs, Silent: true, Sound: "default"},
+		"badge":    {LoginIDs: base.LoginIDs, Silent: true, Badge: &badge},
+		"subtitle": {LoginIDs: base.LoginIDs, Silent: true, Subtitle: "s"},
+		"image":    {LoginIDs: base.LoginIDs, Silent: true, Image: "https://example.com/a.png"},
+	} {
+		t.Run(name, func(t *testing.T) { requireInvalid(t, svc, in, msg) })
+	}
+
+	// A silent push needs no title, and data may be empty.
+	if _, err := svc.Send(context.Background(), base); err != nil {
+		t.Fatalf("silent without title/data: %v", err)
+	}
+	// Without silent, the title is still required.
+	requireInvalid(t, svc, core.SendInput{LoginIDs: []string{"u1"}}, "title is required")
+}
+
+func TestService_Send_OptionValidation(t *testing.T) {
+	svc, _ := newTestService(&fakeSender{})
+	base := func(mod func(*core.SendInput)) core.SendInput {
+		in := core.SendInput{LoginIDs: []string{"u1"}, Title: "x"}
+		mod(&in)
+		return in
+	}
+	intp := func(v int) *int { return &v }
+
+	requireInvalid(t, svc, base(func(in *core.SendInput) { in.TTLSeconds = intp(-1) }), "ttl must be between 0 and 2419200")
+	requireInvalid(t, svc, base(func(in *core.SendInput) { in.TTLSeconds = intp(2419201) }), "ttl must be between 0 and 2419200")
+	requireInvalid(t, svc, base(func(in *core.SendInput) { in.Priority = "urgent" }), "priority must be")
+	requireInvalid(t, svc, base(func(in *core.SendInput) { in.CollapseKey = strings.Repeat("k", 65) }), "collapseKey must be at most 64")
+	requireInvalid(t, svc, base(func(in *core.SendInput) { in.Image = "/relative.png" }), "image must be an absolute http(s) URL")
+	requireInvalid(t, svc, base(func(in *core.SendInput) { in.Image = "ftp://example.com/a.png" }), "image must be an absolute http(s) URL")
+	requireInvalid(t, svc, base(func(in *core.SendInput) { in.Image = "https:///nohost.png" }), "image must be an absolute http(s) URL")
+	requireInvalid(t, svc, base(func(in *core.SendInput) { in.Image = "https://example.com/" + strings.Repeat("a", 2048) }), "image must be at most 2048")
+	requireInvalid(t, svc, base(func(in *core.SendInput) { in.Subtitle = strings.Repeat("s", 257) }), "subtitle must be at most 256")
+	requireInvalid(t, svc, base(func(in *core.SendInput) { in.ThreadID = strings.Repeat("t", 65) }), "threadId must be at most 64")
+	requireInvalid(t, svc, base(func(in *core.SendInput) { in.InterruptionLevel = "loud" }), "interruptionLevel must be one of")
+
+	// Boundary values are accepted.
+	for name, mod := range map[string]func(*core.SendInput){
+		"ttl 0":          func(in *core.SendInput) { in.TTLSeconds = intp(0) },
+		"ttl max":        func(in *core.SendInput) { in.TTLSeconds = intp(2419200) },
+		"priority":       func(in *core.SendInput) { in.Priority = "normal" },
+		"collapseKey":    func(in *core.SendInput) { in.CollapseKey = strings.Repeat("k", 64) },
+		"image":          func(in *core.SendInput) { in.Image = "http://example.com/a.png?x=1" },
+		"subtitle":       func(in *core.SendInput) { in.Subtitle = strings.Repeat("s", 256) },
+		"threadId":       func(in *core.SendInput) { in.ThreadID = strings.Repeat("t", 64) },
+		"passive":        func(in *core.SendInput) { in.InterruptionLevel = "passive" },
+		"time-sensitive": func(in *core.SendInput) { in.InterruptionLevel = "time-sensitive" },
+	} {
+		if _, err := svc.Send(context.Background(), base(mod)); err != nil {
+			t.Errorf("%s: unexpected error: %v", name, err)
+		}
+	}
+}
+
+func TestService_Send_OptionsReachMessage(t *testing.T) {
+	sender := &fakeSender{}
+	svc, store := newTestService(sender)
+	createDevice(t, store, "a", "ios", "tok-a", "u1")
+
+	ttl := 3600
+	_, err := svc.Send(context.Background(), core.SendInput{
+		LoginIDs: []string{"u1"}, Title: "hello",
+		TTLSeconds: &ttl, Priority: "normal", CollapseKey: "news", Image: "https://example.com/a.png",
+		Subtitle: "sub", ThreadID: "thread-1", InterruptionLevel: "time-sensitive",
+	})
+	if err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	m := sender.sent[0][0]
+	if m.TTLSeconds == nil || *m.TTLSeconds != 3600 || m.Priority != "normal" || m.CollapseKey != "news" ||
+		m.Image != "https://example.com/a.png" || m.Silent || m.Subtitle != "sub" ||
+		m.ThreadID != "thread-1" || m.InterruptionLevel != "time-sensitive" {
+		t.Fatalf("options did not reach the message: %+v", m)
+	}
+
+	sender.sent = nil
+	_, err = svc.Send(context.Background(), core.SendInput{
+		LoginIDs: []string{"u1"}, Silent: true, URL: "https://example.com/x", Data: map[string]any{"k": "v"},
+	})
+	if err != nil {
+		t.Fatalf("send silent: %v", err)
+	}
+	m = sender.sent[0][0]
+	if !m.Silent || m.Title != "" || m.Data["k"] != "v" || m.Data["url"] != "https://example.com/x" {
+		t.Fatalf("unexpected silent message: %+v", m)
+	}
+	if m.TTLSeconds != nil || m.Priority != "" {
+		t.Fatalf("unset options must stay unset: %+v", m)
 	}
 }
 

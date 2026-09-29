@@ -252,6 +252,10 @@ curl -X POST http://localhost:8080/v1/notifications \
   }'
 ```
 
+バックエンドは `silent: true` のサイレント (data-only) 通知も送れますが、このアプリのテンプレートは
+まだサイレント通知をフォアグラウンド / バックグラウンドで受けて処理しません。OS までは届きますが、
+WebView には通知されません。
+
 `PUSH_PROVIDER=log` の場合は実際には送信されず、送信内容がバックエンドのログに出力されます。
 実機でプッシュ通知を受け取って確認したい場合は `PUSH_PROVIDER=expo` にしてください
 (必要なら `EXPO_ACCESS_TOKEN` も設定)。

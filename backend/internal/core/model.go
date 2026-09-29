@@ -7,7 +7,11 @@
 // it unchanged.
 package core
 
-import "time"
+import (
+	"slices"
+	"strings"
+	"time"
+)
 
 // Platform is the set of client platforms a Device can register as.
 type Platform string
@@ -88,12 +92,75 @@ type DeviceMatch struct {
 	LoginIDs []string
 }
 
+// DeviceFilter narrows a set of devices. Both fields are optional; when both
+// are set a device has to satisfy both (AND), and within one field any entry
+// may match (OR).
+//
+// It is used in two places with slightly different guarantees:
+//   - Store.ListDevices applies it as a cheap SQL pre-filter (platform
+//     equality and a plain, case-insensitive locale prefix match);
+//   - SendInput.Filter is what the caller asked for, and Service.Send
+//     re-applies it exactly (see MatchesFilter), including the BCP 47
+//     tag-boundary rule for locales, to every target however it was reached.
+type DeviceFilter struct {
+	// Platforms are Platform values ("ios" | "android"). Empty means any.
+	Platforms []string
+	// LocalePrefixes are BCP 47 tag prefixes matched case-insensitively
+	// against Device.Locale ("ja" matches "ja" and "ja-JP", not "jav").
+	// Empty means any. A device with an empty locale never matches a
+	// non-empty LocalePrefixes.
+	LocalePrefixes []string
+}
+
+// Empty reports whether f places no constraint at all.
+func (f DeviceFilter) Empty() bool {
+	return len(f.Platforms) == 0 && len(f.LocalePrefixes) == 0
+}
+
+// MatchesFilter reports whether d satisfies f exactly: platform equality, and
+// for locales the tag-boundary prefix rule (a prefix matches the whole locale
+// or the locale up to a "-" boundary, case-insensitively: "ja" matches "ja" and
+// "ja-JP" but not "jav"; "ja-JP" matches "ja-JP" and "ja-JP-x-foo" only).
+func MatchesFilter(d Device, f DeviceFilter) bool {
+	if len(f.Platforms) > 0 && !slices.Contains(f.Platforms, d.Platform) {
+		return false
+	}
+	if len(f.LocalePrefixes) > 0 {
+		if d.Locale == "" {
+			return false
+		}
+		locale := strings.ToLower(d.Locale)
+		ok := false
+		for _, prefix := range f.LocalePrefixes {
+			prefix = strings.ToLower(prefix)
+			if prefix == "" {
+				continue
+			}
+			if locale == prefix || strings.HasPrefix(locale, prefix+"-") {
+				ok = true
+				break
+			}
+		}
+		if !ok {
+			return false
+		}
+	}
+	return true
+}
+
 // SendInput is the input to Service.Send: the fields of
 // SendNotificationRequest in ../../../openapi/openapi.yaml, already
 // unwrapped from their optional-pointer JSON representation (see validate.go
 // for the constraints checked on them).
 type SendInput struct {
-	LoginIDs  []string
+	// Targeting: at least one of LoginIDs, InstallationIDs or Broadcast is
+	// required, and Broadcast cannot be combined with the other two.
+	LoginIDs        []string
+	InstallationIDs []string
+	Broadcast       bool
+	// Filter narrows the resolved targets (see DeviceFilter).
+	Filter DeviceFilter
+
 	Title     string
 	Body      string
 	URL       string
@@ -101,6 +168,17 @@ type SendInput struct {
 	Badge     *int
 	Sound     string
 	ChannelID string
+
+	// Delivery options; the zero value of each means "not set" (the
+	// provider defaults apply). See push.Message for what each maps to.
+	TTLSeconds        *int
+	Priority          string // "" | "high" | "normal"
+	CollapseKey       string
+	Image             string
+	Silent            bool
+	Subtitle          string
+	ThreadID          string
+	InterruptionLevel string // "" | "passive" | "active" | "time-sensitive" | "critical"
 }
 
 // DeliveryResult is the outcome of sending one push.Message to one device
@@ -108,7 +186,10 @@ type SendInput struct {
 // device; see DeviceMatch).
 type DeliveryResult struct {
 	InstallationID string
-	LoginIDs       []string
+	// LoginIDs are the requested login IDs (SendInput.LoginIDs) this device
+	// is linked to; empty for a device reached only through InstallationIDs
+	// or Broadcast.
+	LoginIDs []string
 	// Status is "ok" | "error".
 	Status       string
 	Error        string

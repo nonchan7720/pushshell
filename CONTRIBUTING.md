@@ -43,7 +43,9 @@ See the [README](README.md) for running the backend and the app, and
 ## Pull request checklist
 
 - **Generated code is committed.** After touching `openapi/openapi.yaml` or the ent schema, run
-  `mise run gen` and commit the result. CI fails if the generated code is stale.
+  `mise run gen` and commit the result. CI fails if the generated code is stale. Use the
+  mise-managed Go toolchain for this (`mise run gen`, not a system `go`): the gzip stream in
+  `openapivalidate/spec.gen.go` depends on the Go version, and CI compares it byte for byte.
 - **Migrations.** After changing the ent schema, generate migrations for every dialect with
   `mise run db:diff <name> --dialect sqlite|mysql|postgres` (mysql / postgres need Docker), and
   mirror the sqlite migration into `backend/worker/migrations` with

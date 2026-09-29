@@ -13,10 +13,12 @@
 package sqlstore
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -29,6 +31,23 @@ import (
 // e.g. "2026-09-28T17:41:41.441300358Z" — so a database written by
 // entstore and one written by sqlstore stay interchangeable.
 const timeLayout = time.RFC3339Nano
+
+// maxBindParams is the most bound parameters one statement may carry:
+// Cloudflare D1 allows at most 100 per query. IN (...) lists that can grow
+// with the request (login IDs, installation IDs) are split into chunks of
+// this size and queried chunk by chunk (see forEachChunk).
+const maxBindParams = 100
+
+// forEachChunk calls fn with consecutive chunks of ids, each at most
+// maxBindParams long, stopping at the first error.
+func forEachChunk(ids []string, fn func(chunk []string) error) error {
+	for chunk := range slices.Chunk(ids, maxBindParams) {
+		if err := fn(chunk); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
 // Store implements core.Store on a *sql.DB. db must already be open on a
 // database with the "devices"/"device_logins" schema applied (migrations/sqlite,
@@ -145,10 +164,48 @@ func (s *Store) GetDevice(ctx context.Context, installationID string) (core.Devi
 }
 
 // FindDevicesByLogins implements core.Store.
+//
+// loginIDs is queried in chunks of maxBindParams (D1's bound-parameter
+// limit). A device can be linked to login IDs that land in different chunks,
+// so the per-chunk matches are merged by device ID; each device's LoginIDs is
+// then sorted and deduplicated (the same login ID may be repeated in the
+// input) and the result is ordered by device ID ascending, exactly as a
+// single query would return it.
 func (s *Store) FindDevicesByLogins(ctx context.Context, loginIDs []string) ([]core.DeviceMatch, error) {
-	if len(loginIDs) == 0 {
+	byID := map[int64]*core.DeviceMatch{}
+	err := forEachChunk(loginIDs, func(chunk []string) error {
+		matches, err := s.findDevicesByLoginsChunk(ctx, chunk)
+		if err != nil {
+			return err
+		}
+		for _, m := range matches {
+			if have, ok := byID[m.Device.ID]; ok {
+				have.LoginIDs = append(have.LoginIDs, m.LoginIDs...)
+				continue
+			}
+			byID[m.Device.ID] = &m
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(byID) == 0 {
 		return nil, nil
 	}
+	out := make([]core.DeviceMatch, 0, len(byID))
+	for _, m := range byID {
+		slices.Sort(m.LoginIDs)
+		m.LoginIDs = slices.Compact(m.LoginIDs)
+		out = append(out, *m)
+	}
+	slices.SortFunc(out, func(a, b core.DeviceMatch) int { return cmp.Compare(a.Device.ID, b.Device.ID) })
+	return out, nil
+}
+
+// findDevicesByLoginsChunk is one FindDevicesByLogins query for at most
+// maxBindParams login IDs.
+func (s *Store) findDevicesByLoginsChunk(ctx context.Context, loginIDs []string) ([]core.DeviceMatch, error) {
 	placeholders := make([]string, len(loginIDs))
 	args := make([]any, len(loginIDs))
 	for i, id := range loginIDs {
@@ -185,6 +242,124 @@ func (s *Store) FindDevicesByLogins(ctx context.Context, loginIDs []string) ([]c
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("sqlstore: find devices by logins: %w", err)
+	}
+	return out, nil
+}
+
+// FindDevicesByInstallationIDs implements core.Store.
+//
+// installationIDs is queried in chunks of maxBindParams (D1's
+// bound-parameter limit). Installation IDs are unique, so a device shows up
+// in at most one chunk (unless the input repeats an ID, which is collapsed by
+// device ID); the concatenated result is sorted by device ID ascending.
+func (s *Store) FindDevicesByInstallationIDs(ctx context.Context, installationIDs []string) ([]core.Device, error) {
+	var out []core.Device
+	seen := map[int64]bool{}
+	err := forEachChunk(installationIDs, func(chunk []string) error {
+		placeholders := make([]string, len(chunk))
+		args := make([]any, len(chunk))
+		for i, id := range chunk {
+			placeholders[i] = "?"
+			args[i] = id
+		}
+		devices, err := s.queryDevices(ctx,
+			fmt.Sprintf("d.installation_id IN (%s)", strings.Join(placeholders, ",")), args)
+		if err != nil {
+			return err
+		}
+		for _, d := range devices {
+			if !seen[d.ID] {
+				seen[d.ID] = true
+				out = append(out, d)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	slices.SortFunc(out, func(a, b core.Device) int { return cmp.Compare(a.ID, b.ID) })
+	return out, nil
+}
+
+// ListDevices implements core.Store.
+//
+// The locale pre-filter is LOWER(d.locale) LIKE 'prefix%' ESCAPE '!' with
+// the (lowercased) prefix's %, _ and ! escaped: plain, portable SQL that
+// behaves the same on sqlite/D1, mysql and postgres. It is a plain prefix
+// match; core.Service re-applies the exact BCP 47 tag-boundary rule.
+func (s *Store) ListDevices(ctx context.Context, filter core.DeviceFilter) ([]core.Device, error) {
+	// At most 2 platforms and 50 locale prefixes (validated by core), so the
+	// bound parameters stay under D1's limit of maxBindParams.
+	var (
+		conds []string
+		args  []any
+	)
+	if len(filter.Platforms) > 0 {
+		placeholders := make([]string, len(filter.Platforms))
+		for i, p := range filter.Platforms {
+			placeholders[i] = "?"
+			args = append(args, p)
+		}
+		conds = append(conds, fmt.Sprintf("d.platform IN (%s)", strings.Join(placeholders, ",")))
+	}
+	if len(filter.LocalePrefixes) > 0 {
+		likes := make([]string, len(filter.LocalePrefixes))
+		for i, prefix := range filter.LocalePrefixes {
+			likes[i] = "LOWER(d.locale) LIKE ? ESCAPE '!'"
+			args = append(args, likePrefixPattern(prefix))
+		}
+		conds = append(conds, "("+strings.Join(likes, " OR ")+")")
+	}
+	where := "1 = 1"
+	if len(conds) > 0 {
+		where = strings.Join(conds, " AND ")
+	}
+	return s.queryDevices(ctx, where, args)
+}
+
+// likePrefixPattern returns the LIKE pattern for a case-insensitive prefix
+// match on prefix, to be used with `LOWER(col) LIKE ? ESCAPE '!'`.
+func likePrefixPattern(prefix string) string {
+	r := strings.NewReplacer("!", "!!", "%", "!%", "_", "!_")
+	return r.Replace(strings.ToLower(prefix)) + "%"
+}
+
+// queryDevices loads the devices matching where (a condition over the
+// "devices" table aliased as d), ordered by device ID ascending, together
+// with their login IDs (sorted) in a single LEFT JOIN query.
+func (s *Store) queryDevices(ctx context.Context, where string, args []any) ([]core.Device, error) {
+	query := `
+		SELECT d.id, d.installation_id, d.platform, d.push_token, d.device_token,
+		       d.app_id, d.app_version, d.build_number, d.os_version, d.device_model, d.locale,
+		       d.created_at, d.updated_at, dl.login_id
+		FROM devices d
+		LEFT JOIN device_logins dl ON dl.device_logins = d.id
+		WHERE ` + where + `
+		ORDER BY d.id, dl.login_id
+	`
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("sqlstore: query devices: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []core.Device
+	for rows.Next() {
+		d, loginID, err := scanDeviceWithOptionalLogin(rows)
+		if err != nil {
+			return nil, fmt.Errorf("sqlstore: scan device: %w", err)
+		}
+		if len(out) == 0 || out[len(out)-1].ID != d.ID {
+			out = append(out, d)
+		}
+		if loginID.Valid {
+			last := &out[len(out)-1]
+			last.LoginIDs = append(last.LoginIDs, loginID.String)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("sqlstore: query devices: %w", err)
 	}
 	return out, nil
 }
@@ -279,6 +454,28 @@ func scanDeviceWithLogin(sc scanner) (core.Device, string, error) {
 		&createdAt, &updatedAt, &loginID,
 	); err != nil {
 		return core.Device{}, "", err
+	}
+	d, err := toDevice(id, installationID, platform, pushToken, deviceToken,
+		appID, appVersion, buildNumber, osVersion, deviceModel, locale, createdAt, updatedAt)
+	return d, loginID, err
+}
+
+// scanDeviceWithOptionalLogin is scanDeviceWithLogin for a LEFT JOIN on
+// device_logins: the login_id is NULL for a device with no login links.
+func scanDeviceWithOptionalLogin(sc scanner) (core.Device, sql.NullString, error) {
+	var (
+		id                                                                                     int64
+		installationID, platform                                                               string
+		pushToken, deviceToken, appID, appVersion, buildNumber, osVersion, deviceModel, locale sql.NullString
+		createdAt, updatedAt                                                                   string
+		loginID                                                                                sql.NullString
+	)
+	if err := sc.Scan(
+		&id, &installationID, &platform, &pushToken, &deviceToken,
+		&appID, &appVersion, &buildNumber, &osVersion, &deviceModel, &locale,
+		&createdAt, &updatedAt, &loginID,
+	); err != nil {
+		return core.Device{}, sql.NullString{}, err
 	}
 	d, err := toDevice(id, installationID, platform, pushToken, deviceToken,
 		appID, appVersion, buildNumber, osVersion, deviceModel, locale, createdAt, updatedAt)

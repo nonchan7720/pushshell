@@ -123,7 +123,10 @@ sequenceDiagram
 3. The app requests notification permission and registers the Expo Push Token (or native
    device token) together with device info via `POST /v1/devices`.
 4. Any server posts `{ loginIds, title, body, url }` to `POST /v1/notifications`, and the
-   backend pushes to every device linked to those login IDs.
+   backend pushes to every device linked to those login IDs. Devices can also be targeted
+   directly by `installationIds`, or all at once with `broadcast` narrowed by a platform / locale
+   `filter`, and delivery options (TTL, priority, collapse key, image, silent data-only pushes,
+   and more) are available; see [`backend/README.md`](backend/README.md) (in Japanese).
 5. When the user taps the notification, the app opens `url` in the WebView.
 
 The `postMessage` protocol is defined in [`app/src/bridge.ts`](app/src/bridge.ts) and the HTTP

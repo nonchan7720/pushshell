@@ -53,4 +53,20 @@ type Store interface {
 	// each DeviceMatch.LoginIDs holding the (sorted) subset of loginIDs that
 	// device is linked to.
 	FindDevicesByLogins(ctx context.Context, loginIDs []string) ([]DeviceMatch, error)
+
+	// FindDevicesByInstallationIDs returns the devices whose installation ID
+	// is in installationIDs, ordered by device ID ascending, with LoginIDs
+	// populated (sorted; nil if the device has no login links). Unknown
+	// installation IDs are skipped and empty input returns nil, nil.
+	FindDevicesByInstallationIDs(ctx context.Context, installationIDs []string) ([]Device, error)
+
+	// ListDevices returns every device matching filter, ordered by device ID
+	// ascending, with LoginIDs populated like FindDevicesByInstallationIDs.
+	// A non-empty filter.Platforms keeps devices whose platform is one of
+	// them; a non-empty filter.LocalePrefixes keeps devices whose locale
+	// starts with any of the prefixes, case-insensitively. That is a plain
+	// string prefix match (no BCP 47 tag boundary: "ja" also matches "jav"),
+	// so it is only a pre-filter — Service.Send re-applies MatchesFilter for
+	// the exact rule. Devices with no locale never match a locale prefix.
+	ListDevices(ctx context.Context, filter DeviceFilter) ([]Device, error)
 }
