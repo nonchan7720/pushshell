@@ -1,0 +1,44 @@
+# Dependency updates. Actions stay pinned to commit SHAs (Dependabot updates the
+# SHA and the trailing version comment together).
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: gomod
+    directory: /backend
+    schedule:
+      interval: weekly
+    groups:
+      go-minor-patch:
+        update-types: ["minor", "patch"]
+
+  - package-ecosystem: npm
+    directory: /app
+    schedule:
+      interval: weekly
+    # Expo SDK packages must be upgraded together with `npx expo install --fix`,
+    # so they are excluded here and handled manually per SDK release.
+    ignore:
+      - dependency-name: "expo"
+      - dependency-name: "expo-*"
+      - dependency-name: "react-native"
+      - dependency-name: "react-native-*"
+      - dependency-name: "react"
+      - dependency-name: "@types/react"
+    groups:
+      app-tooling:
+        patterns: ["*"]
+
+  - package-ecosystem: npm
+    directory: /backend/worker
+    schedule:
+      interval: weekly
+    groups:
+      worker-tooling:
+        patterns: ["*"]

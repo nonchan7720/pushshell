@@ -1,34 +1,60 @@
-# pushshell (プッシェル)
+# pushshell
 
-Web アプリを WebView で表示し、プッシュ通知だけをネイティブ側で担うアプリのテンプレートと、
-その通知バックエンドのモノレポです。
+[![CI](https://github.com/nonchan7720/pushshell/actions/workflows/ci.yml/badge.svg)](https://github.com/nonchan7720/pushshell/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
+English | [日本語](README.ja.md)
+
+**Turn your web app into a native iOS / Android app with push notifications, without rewriting it.**
+
+pushshell is a monorepo with two parts:
+
+- a **WebView shell app** (React Native / Expo) that shows your existing web app and only
+  handles the native bits: notification permission, push tokens, and deep-linking a tapped
+  notification back into the web app;
+- a **notification backend** (Go) that maps your *login IDs* to devices and delivers pushes
+  through Expo Push, FCM and APNs. It runs as a plain binary (sqlite / MySQL / PostgreSQL) or
+  on Cloudflare Workers + D1 within the free plan.
+
+Your web app keeps owning login, UI and business logic. It talks to the shell through a tiny
+`postMessage` bridge, and your web backend sends notifications with a single HTTP call:
+
+```sh
+curl -X POST https://push.example.com/v1/notifications \
+  -H 'Content-Type: application/json' -H 'X-API-Key: ...' \
+  -d '{"loginIds":["user-1"],"title":"Hello","body":"You have a new message","url":"https://example.com/inbox"}'
+```
 
 ```
 .
-├── app/        React Native (Expo) アプリ。URL / 名前 / アイコンはビルド時に env で注入
-├── backend/    Go の通知バックエンド (ent + Atlas, sqlite / mysql / postgres)
-├── openapi/    アプリとバックエンドの契約 (ここから両方のコードを生成)
-├── examples/   bridge の動作確認用の静的ページ
-└── .mise.toml  ツールチェーンとタスク定義 (開発環境の入口)
+├── app/        React Native (Expo) app. URL / name / icons are injected from env at build time
+├── backend/    Go notification backend (ent + Atlas; sqlite / mysql / postgres; Cloudflare Workers + D1)
+├── openapi/    The contract between app and backend (both sides are generated from it)
+├── examples/   Static page to exercise the bridge
+├── docs/       Roadmap and demo evidence
+└── .mise.toml  Toolchain and task definitions (the entry point for development)
 ```
 
-## アーキテクチャ
+> `app/README.md` and `backend/README.md` are currently written in Japanese. English versions
+> are on the [roadmap](docs/ROADMAP.md); contributions are welcome.
+
+## Architecture
 
 ```mermaid
 flowchart LR
-    subgraph Phone["スマホ (pushshell アプリ)"]
-        WV["WebView<br/>WEBAPP_URL を表示"]
-        Native["ネイティブ層 (App.tsx)<br/>bridge / 通知権限 / push token<br/>installationId + loginIds を SecureStore に保持"]
+    subgraph Phone["Phone (pushshell app)"]
+        WV["WebView<br/>shows WEBAPP_URL"]
+        Native["Native layer (App.tsx)<br/>bridge / notification permission / push token<br/>keeps installationId + loginIds in SecureStore"]
         WV <-- "postMessage<br/>login / logout / openExternal / getState<br/>⇄ ready / registered / unregistered / notification" --> Native
     end
 
-    WebApp["Web アプリ<br/>(既存サービス。ログイン等の基本操作はここ)"]
-    WebBE["Web アプリのバックエンド"]
+    WebApp["Web app<br/>(your existing service: login etc. happens here)"]
+    WebBE["Web app backend"]
 
-    subgraph Backend["通知バックエンド (Go, backend/)"]
+    subgraph Backend["Notification backend (Go, backend/)"]
         API["HTTP API (openapi.yaml)<br/>POST /v1/devices<br/>DELETE /v1/devices/{id}[/logins/{loginId}]<br/>DELETE /v1/logins/{loginId} 🔑<br/>POST /v1/notifications 🔑"]
         Core["internal/core<br/>Service / Store / validate"]
-        DB[("devices ⟷ device_logins<br/>(多対多)")]
+        DB[("devices ⟷ device_logins<br/>(many-to-many)")]
         Push["internal/push<br/>PUSH_PROVIDER = expo | native | log"]
         API --> Core --> DB
         Core --> Push
@@ -36,8 +62,8 @@ flowchart LR
 
     WebApp -- "HTTPS" --> WV
     WebApp --- WebBE
-    Native -- "端末登録 / 解除" --> API
-    WebBE -- "通知送信・セッション失効<br/>(X-API-Key 🔑)" --> API
+    Native -- "register / unregister device" --> API
+    WebBE -- "send notification / revoke session<br/>(X-API-Key 🔑)" --> API
     Push -- "expo" --> Expo["Expo Push Service"]
     Push -- "native" --> FCM["FCM HTTP v1"]
     Push -- "native" --> APNs["APNs"]
@@ -46,190 +72,199 @@ flowchart LR
     APNs --> Native
 ```
 
-同じバックエンドを 2 通りで動かせます。
+The same backend has two entry points.
 
-| エントリポイント | 動作環境 | DB | 差分 |
+| Entry point | Runtime | DB | Differences |
 |---|---|---|---|
-| `cmd/server` | 通常の Go バイナリ (CGO なし) | sqlite / mysql / postgres (`internal/store/entstore`, ent + Atlas migration) | kin-openapi によるフル OpenAPI バリデーション付き |
-| `cmd/worker` | Cloudflare Workers (`GOOS=js GOARCH=wasm`, 約 2.2MB gzip で無料プラン内) | D1 (`internal/store/sqlstore`, 素の `database/sql`) | ent / atlas / kin-openapi をリンクしない。外部 HTTP は `cloudflare/fetch` 経由 |
+| `cmd/server` | Plain Go binary (no CGO) | sqlite / mysql / postgres (`internal/store/entstore`, ent + Atlas migrations) | Full OpenAPI request validation via kin-openapi |
+| `cmd/worker` | Cloudflare Workers (`GOOS=js GOARCH=wasm`, about 2.2 MB gzipped, fits the free plan) | D1 (`internal/store/sqlstore`, plain `database/sql`) | Does not link ent / atlas / kin-openapi. Outbound HTTP goes through `cloudflare/fetch` |
 
-`internal/core` (ユースケース) と `internal/transport/httpapi` (oapi-codegen 生成サーバーの実装)、`internal/push` は両者で共通です。
+`internal/core` (use cases), `internal/transport/httpapi` (the oapi-codegen server implementation)
+and `internal/push` are shared by both.
 
-### ログインから通知までの流れ
+### From login to notification
 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant W as Web アプリ (WebView 内)
-    participant A as アプリ (ネイティブ層)
-    participant B as 通知バックエンド
-    participant P as Push サービス<br/>(Expo / FCM / APNs)
-    participant S as Web アプリのバックエンド
+    participant W as Web app (inside WebView)
+    participant A as App (native layer)
+    participant B as Notification backend
+    participant P as Push service<br/>(Expo / FCM / APNs)
+    participant S as Web app backend
 
     A->>W: ready { installationId, loginIds, pushPermission }
-    Note over W: ユーザーがログイン
+    Note over W: User logs in
     W->>A: postMessage login { loginId }
-    A->>A: 通知権限を要求し push token を取得
-    A->>B: POST /v1/devices { installationId, loginId, pushToken | deviceToken, 端末情報 }
+    A->>A: Request notification permission, get push token
+    A->>B: POST /v1/devices { installationId, loginId, pushToken | deviceToken, device info }
     B-->>A: 200 Device { loginIds: [...] }
     A->>W: registered { loginId }
 
     S->>B: POST /v1/notifications { loginIds, title, body, url }  (X-API-Key)
-    B->>B: loginIds → 端末を引き、同一端末は 1 通に重複排除
-    B->>P: 送信 (無効トークンは端末を自動削除)
-    P-->>A: プッシュ通知
+    B->>B: loginIds → devices, deduplicated to one message per device
+    B->>P: send (devices with invalid tokens are deleted automatically)
+    P-->>A: Push notification
     B-->>S: 200 { requested, sent, failed, results }
-    Note over A: ユーザーが通知をタップ
-    A->>W: url を WebView で開き notification { data } を通知
+    Note over A: User taps the notification
+    A->>W: open url in the WebView, emit notification { data }
 
-    Note over W,S: ログアウト / セッション失効
+    Note over W,S: Logout / session revocation
     W->>A: postMessage logout { loginId? }
     A->>B: DELETE /v1/devices/{installationId}/logins/{loginId}
-    S->>B: DELETE /v1/logins/{loginId}  (全端末から解除, X-API-Key)
+    S->>B: DELETE /v1/logins/{loginId}  (unlink from every device, X-API-Key)
 ```
 
-## 仕組み
+## How it works
 
-1. アプリは `WEBAPP_URL` を WebView で表示するだけ。基本操作はすべて Web アプリ側。
-2. Web アプリがログインしたら `window.ReactNativeWebView.postMessage(JSON.stringify({ type: "login", loginId }))` を送る。
-3. アプリは通知権限を取り、Expo Push Token と端末情報をまとめて `POST /v1/devices` に登録する。
-4. 任意のサーバーが `POST /v1/notifications` に `{ loginIds, title, body, url }` を投げると、
-   バックエンドがそのログイン ID に紐づく端末へ Expo Push API 経由で通知する。
-5. 通知をタップすると、アプリは `url` を WebView で開く。
+1. The app only shows `WEBAPP_URL` in a WebView. Everything else happens in your web app.
+2. When the web app logs a user in, it sends
+   `window.ReactNativeWebView.postMessage(JSON.stringify({ type: "login", loginId }))`.
+3. The app requests notification permission and registers the Expo Push Token (or native
+   device token) together with device info via `POST /v1/devices`.
+4. Any server posts `{ loginIds, title, body, url }` to `POST /v1/notifications`, and the
+   backend pushes to every device linked to those login IDs.
+5. When the user taps the notification, the app opens `url` in the WebView.
 
-postMessage のプロトコルは [`app/src/bridge.ts`](app/src/bridge.ts) に、API は
-[`openapi/openapi.yaml`](openapi/openapi.yaml) に定義があります。
+The `postMessage` protocol is defined in [`app/src/bridge.ts`](app/src/bridge.ts) and the HTTP
+API in [`openapi/openapi.yaml`](openapi/openapi.yaml).
 
-## セットアップ
+## Setup
 
-[mise](https://mise.jdx.dev) だけ入れてください。Node / Go / Atlas / golangci-lint は mise が揃えます。
+Install [mise](https://mise.jdx.dev). It provides Node, Go, Atlas and golangci-lint.
 
 ```sh
-mise install          # ツールチェーン
+mise install          # toolchain
 mise run setup        # go mod download + npm install
-mise run gen          # ent / OpenAPI (Go, TS) のコード生成
-mise tasks            # タスク一覧
+mise run gen          # code generation: ent / OpenAPI (Go, TS)
+mise tasks            # list all tasks
 ```
 
-## 動かす
+## Run
 
 ```sh
-# バックエンド (sqlite, 通知はログ出力のみ)
-cp backend/.env.example backend/.env   # 必要に応じて編集
+# Backend (sqlite; notifications are only logged)
+cp backend/.env.example backend/.env   # edit as needed
 API_KEY=dev PUSH_PROVIDER=log DB_AUTO_MIGRATE=true mise run backend:run
 
-# アプリ (dev client が必要。Expo Go は Android のリモート通知非対応)
-cp app/.env.example app/.env           # WEBAPP_URL, API_BASE_URL, EAS_PROJECT_ID など
+# App (requires a dev client. Expo Go cannot receive remote notifications on Android)
+cp app/.env.example app/.env           # WEBAPP_URL, API_BASE_URL, EAS_PROJECT_ID, ...
 mise run app:prebuild
 mise run app:run:android   # or app:run:ios
 ```
 
-通知を送る:
+Send a notification:
 
 ```sh
 curl -X POST http://localhost:8080/v1/notifications \
   -H 'Content-Type: application/json' -H 'X-API-Key: dev' \
-  -d '{"loginIds":["user-1"],"title":"こんにちは","body":"新しいお知らせがあります","url":"https://example.com/inbox"}'
+  -d '{"loginIds":["user-1"],"title":"Hello","body":"You have a new message","url":"https://example.com/inbox"}'
 ```
 
-## テンプレートとして使う
+## Use it as a template
 
-このリポジトリは GitHub の Template repository です。自分のアプリを作るときは
-fork ではなく **「Use this template」** で新しいリポジトリを作ってください
-(履歴を引き継がず、private にもできます。fork は本リポジトリへの貢献用です)。
+This repository is a GitHub **template repository**. To build your own app, create a new
+repository with **"Use this template"** rather than forking (no history is carried over and the
+new repository can be private; forks are for contributing back to this project).
 
-作成後に差し替えるのは次の 4 か所だけです。コードの変更は要りません。
+Only four things need changing afterwards. No code changes are required.
 
-1. **アプリの設定** (`app/.env`、`app/.env.example` からコピー): 下表の変数。
-   アイコン画像は `app/assets/` に置いて `APP_ICON` などで指す。
-2. **バックエンドの設定**: `backend/.env` (`backend/.env.example` から) の
-   `API_KEY` / `DB_*` / `PUSH_PROVIDER` と FCM / APNs の資格情報。
-   Cloudflare Workers で動かすなら `backend/worker/wrangler.toml` の
-   `database_id` と `wrangler secret put` (詳細は
-   [`backend/README.md`](backend/README.md))。
-3. **GitHub Actions の Secrets** (release ビルドを CI で作る場合):
-   `ANDROID_KEYSTORE_BASE64` / `ANDROID_KEYSTORE_PASSWORD` /
-   `ANDROID_KEY_ALIAS` / `ANDROID_KEY_PASSWORD`、FCM を使うなら
-   `GOOGLE_SERVICES_JSON_BASE64`。
-4. **識別子の置換** (任意): Go のモジュールパス
-   `github.com/nonchan7720/pushshell/backend` はモノレポ内でしか import
-   しないのでそのままでもビルド・動作しますが、自分の名前に揃えるなら
-   `pushshell` / `com.example.pushshell` / `nonchan7720/pushshell` を
-   一括置換して `mise run gen` を実行してください (ent の生成コードにも
-   モジュールパスが入っています)。
+1. **App settings** (`app/.env`, copied from `app/.env.example`): the variables in the table
+   below. Put icon images under `app/assets/` and point `APP_ICON` etc. at them.
+2. **Backend settings**: `API_KEY` / `DB_*` / `PUSH_PROVIDER` and the FCM / APNs credentials in
+   `backend/.env` (from `backend/.env.example`). For Cloudflare Workers, set `database_id` in
+   `backend/worker/wrangler.toml` and run `wrangler secret put` (see
+   [`backend/README.md`](backend/README.md)).
+3. **GitHub Actions secrets** (if you build release binaries in CI):
+   `ANDROID_KEYSTORE_BASE64` / `ANDROID_KEYSTORE_PASSWORD` / `ANDROID_KEY_ALIAS` /
+   `ANDROID_KEY_PASSWORD`, plus `GOOGLE_SERVICES_JSON_BASE64` if you use FCM.
+4. **Identifiers** (optional): the Go module path `github.com/nonchan7720/pushshell/backend` is
+   only imported inside the monorepo, so it builds and runs as is. To rename it, replace
+   `pushshell` / `com.example.pushshell` / `nonchan7720/pushshell` throughout and run
+   `mise run gen` (the generated ent code embeds the module path).
 
-`app/` はテンプレートです。`app/.env` (または EAS の環境変数) で次を差し替えるだけで
-別のアプリになります。詳細は [`app/README.md`](app/README.md)。
+`app/` is a template. Changing the following in `app/.env` (or EAS environment variables) turns it
+into a different app. Details in [`app/README.md`](app/README.md).
 
-| 変数 | 内容 |
+| Variable | Purpose |
 |---|---|
-| `APP_NAME` / `APP_SLUG` / `APP_SCHEME` | アプリ名・slug・URL スキーム |
-| `APP_ICON` / `APP_ADAPTIVE_ICON_*` / `APP_SPLASH_*` | アイコンとスプラッシュ |
-| `IOS_BUNDLE_ID` / `ANDROID_PACKAGE` | バンドル ID |
-| `WEBAPP_URL` / `ALLOWED_ORIGINS` | 表示する URL と許可 origin |
-| `API_BASE_URL` | バックエンド URL |
-| `EAS_PROJECT_ID` | Expo Push Token に必要 |
+| `APP_NAME` / `APP_SLUG` / `APP_SCHEME` | App name, slug and URL scheme |
+| `APP_ICON` / `APP_ADAPTIVE_ICON_*` / `APP_SPLASH_*` | Icons and splash screen |
+| `IOS_BUNDLE_ID` / `ANDROID_PACKAGE` | Bundle identifiers |
+| `WEBAPP_URL` / `ALLOWED_ORIGINS` | URL to show and the allowed origins |
+| `API_BASE_URL` | Backend URL |
+| `EAS_PROJECT_ID` | Required for Expo Push Tokens |
 
-## Android をローカルでビルド・実行する
+## Build and run Android locally
 
-JDK 17 は mise が入れます。Android SDK は mise のプラグインで管理できないため、
-`mise run android:sdk` が `$ANDROID_HOME` (既定 `~/.android-sdk`) に必要なパッケージ
-(platform-tools, platform 36, build-tools 36.0.0, NDK 27.1, cmake 3.22.1) をインストールします。
-環境変数 (`ANDROID_HOME`, `PATH`) は `.mise.toml` の `[env]` で設定済みです。
+mise installs JDK 17. The Android SDK cannot be managed by a mise plugin, so
+`mise run android:sdk` installs the required packages (platform-tools, platform 36, build-tools
+36.0.0, NDK 27.1, cmake 3.22.1) into `$ANDROID_HOME` (default `~/.android-sdk`). `ANDROID_HOME`
+and `PATH` are set in the `[env]` section of `.mise.toml`.
 
 ```sh
-mise install                        # JDK 17 など
-mise run android:sdk                # Android SDK 本体
+mise install                        # JDK 17 etc.
+mise run android:sdk                # Android SDK
 mise run app:build:android:local    # expo prebuild + gradlew assembleDebug → app/android/app/build/outputs/apk/debug/
 
-# エミュレータで動かす場合
-mise run android:avd:create         # emulator + system image + AVD 作成
-mise run android:emulator           # 起動 (KVM が無ければソフトウェアエミュレーション)
-mise run app:install:android        # APK をインストール
-mise run app:run:android            # Metro 付きで実行 (expo run:android)
+# With an emulator
+mise run android:avd:create         # emulator + system image + AVD
+mise run android:emulator           # start (falls back to software emulation without KVM)
+mise run app:install:android        # install the APK
+mise run app:run:android            # run with Metro (expo run:android)
 ```
 
-実機なら USB デバッグを有効にして `mise run android:devices` で見えることを確認し、
-`mise run app:run:android` を実行してください。
+For a physical device, enable USB debugging, confirm it shows up in `mise run android:devices`,
+then run `mise run app:run:android`.
 
-エミュレータ関連の環境変数 (`.mise.toml` の `[env]`、`.env` で上書き可):
+Emulator-related variables (`[env]` in `.mise.toml`, overridable in `.env`):
 
-| 変数 | 内容 | 既定 |
+| Variable | Purpose | Default |
 |---|---|---|
-| `ANDROID_SYSTEM_IMAGE_TAG` | `google_apis` (Play services あり。FCM の確認に必要) か `default` (AOSP のみ。軽い) | `google_apis` |
-| `ANDROID_AVD_NAME` | AVD 名 | `pushshell` |
-| `ANDROID_EMULATOR_EXTRA_ARGS` | `emulator` に渡す追加引数 (例: `-cores 2 -memory 3072`) | なし |
+| `ANDROID_SYSTEM_IMAGE_TAG` | `google_apis` (with Play services, needed to verify FCM) or `default` (AOSP only, lighter) | `google_apis` |
+| `ANDROID_AVD_NAME` | AVD name | `pushshell` |
+| `ANDROID_EMULATOR_EXTRA_ARGS` | Extra arguments for `emulator` (e.g. `-cores 2 -memory 3072`) | none |
 
-KVM が使えない環境 (CI コンテナなど) ではソフトウェアエミュレーションになり、起動に 20〜30 分かかることがあります。
-その場合は `ANDROID_SYSTEM_IMAGE_TAG=default` と `-cores 2` 程度に抑えると安定します。
+Without KVM (e.g. in CI containers) the emulator runs in software emulation and can take 20 to
+30 minutes to boot. `ANDROID_SYSTEM_IMAGE_TAG=default` and about `-cores 2` make it more stable.
 
-## 開発タスク
+## Development tasks
 
-| タスク | 内容 |
+| Task | Purpose |
 |---|---|
-| `mise run gen` | ent + OpenAPI (Go / TS) 生成 |
+| `mise run gen` | Generate ent + OpenAPI (Go / TS) code |
 | `mise run check` | vet + test + typecheck |
-| `mise run backend:run` / `backend:test` / `backend:lint` | バックエンド |
-| `mise run db:diff <name> --dialect sqlite\|mysql\|postgres` | ent スキーマから migration 生成 |
-| `mise run db:apply` / `db:status` / `db:lint` | Atlas で migration 適用・確認 |
-| `mise run app:start` / `app:typecheck` / `app:build:android` / `app:build:ios` | アプリ (EAS Build) |
-| `mise run android:sdk` / `android:avd:create` / `android:emulator` / `android:devices` | Android SDK とエミュレータ |
-| `mise run app:build:android:local` / `app:build:android:bundle` / `app:install:android` / `app:run:android` | ローカル Android ビルド (APK / AAB)・実行 |
+| `mise run backend:run` / `backend:test` / `backend:lint` | Backend |
+| `mise run db:diff <name> --dialect sqlite\|mysql\|postgres` | Generate a migration from the ent schema |
+| `mise run db:apply` / `db:status` / `db:lint` | Apply and check migrations with Atlas |
+| `mise run app:start` / `app:typecheck` / `app:build:android` / `app:build:ios` | App (EAS Build) |
+| `mise run android:sdk` / `android:avd:create` / `android:emulator` / `android:devices` | Android SDK and emulator |
+| `mise run app:build:android:local` / `app:build:android:bundle` / `app:install:android` / `app:run:android` | Local Android build (APK / AAB) and run |
 
-DB は `DB_DIALECT` (sqlite / mysql / postgres) と `DB_DSN`、Atlas 用に `ATLAS_URL` で切り替えます。
-mysql / postgres の migration 生成には Atlas の dev database として Docker が必要です。
-詳細は [`backend/README.md`](backend/README.md)。
+The database is selected with `DB_DIALECT` (sqlite / mysql / postgres) and `DB_DSN`, and
+`ATLAS_URL` for Atlas. Generating mysql / postgres migrations needs Docker for the Atlas dev
+database. See [`backend/README.md`](backend/README.md).
 
 ## CI
 
-| ワークフロー | トリガー | 内容 |
+| Workflow | Trigger | What it does |
 |---|---|---|
-| `ci.yml` | PR / main への push | `backend`: 生成コードが最新か、vet / lint / test、CGO なしビルド、migration の整合。`worker`: wasm ビルド、ent / atlas / kin-openapi 非リンクの確認、ビルド済み wasm を wrangler dev (workerd) + ローカル D1 で起動して API を叩くスモークテスト、gzip 3MB の size gate。`app`: 生成型が最新か、typecheck |
-| `android-apk.yml` (Android Build) | 手動 (`workflow_dispatch`) | input で `APP_NAME` / `ANDROID_PACKAGE` / `WEBAPP_URL` / `API_BASE_URL` / `PUSH_PROVIDER` などと成果物の種類 (`apk` / `aab` / `both`) を指定してビルドし Artifact に保存。Google Play の新規アプリは AAB 必須。Secrets に `ANDROID_KEYSTORE_BASE64` 等があれば release 署名、`GOOGLE_SERVICES_JSON_BASE64` があれば FCM 設定を同梱 |
-| `android-emulator.yml` | 手動 (`workflow_dispatch`) | KVM を有効化した ubuntu ランナーでエミュレータを起動し、release APK (x86_64) を入れて起動。ランナー上のバックエンド (`PUSH_PROVIDER=log`) と `examples/webapp` に `10.0.2.2` で接続し、スクリーンショットと logcat を Artifact に保存 |
+| `ci.yml` | PRs and pushes to main | `backend`: generated code is up to date, vet / lint / test, CGO-free build, migration consistency. `worker`: wasm build, checks that ent / atlas / kin-openapi are not linked, boots the built wasm with wrangler dev (workerd) + local D1 and smoke-tests the API, 3 MB gzip size gate. `app`: generated types are up to date, typecheck |
+| `android-apk.yml` (Android Build) | Manual (`workflow_dispatch`) | Builds with `APP_NAME` / `ANDROID_PACKAGE` / `WEBAPP_URL` / `API_BASE_URL` / `PUSH_PROVIDER` etc. from inputs and the artifact type (`apk` / `aab` / `both`), then uploads the artifact. New Google Play apps require AAB. Signs the release build when `ANDROID_KEYSTORE_BASE64` etc. are present, bundles FCM config when `GOOGLE_SERVICES_JSON_BASE64` is present |
+| `android-emulator.yml` | Manual (`workflow_dispatch`) | Boots an emulator on a KVM-enabled ubuntu runner, installs and launches the release APK (x86_64). Connects to a backend on the runner (`PUSH_PROVIDER=log`) and `examples/webapp` via `10.0.2.2`, uploads screenshots and logcat |
 
-`android-apk.yml` は `workflow_call` でも呼べるので、他のワークフローから再利用できます。
-アクションはすべてコミット SHA で固定しています。
+`android-apk.yml` can also be called with `workflow_call` from other workflows. All actions are
+pinned to commit SHAs.
 
-エミュレータのスモークテスト本体は `scripts/android/emulator-smoke.sh` で、ローカルでも
-`mise run android:emulator` でエミュレータを起動したあと `mise run android:smoke` で同じ確認ができます。
+The emulator smoke test itself is `scripts/android/emulator-smoke.sh`. Locally, start the emulator
+with `mise run android:emulator` and run the same checks with `mise run android:smoke`.
+
+## Roadmap and contributing
+
+See [`docs/ROADMAP.md`](docs/ROADMAP.md) for where the project is heading and
+[`CONTRIBUTING.md`](CONTRIBUTING.md) for how to help. Issues and pull requests are welcome in
+English or Japanese.
+
+## License
+
+[MIT](LICENSE)
