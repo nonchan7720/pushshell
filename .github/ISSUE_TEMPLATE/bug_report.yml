@@ -1,0 +1,61 @@
+name: Bug report / バグ報告
+description: Something does not work as documented. / ドキュメント通りに動かない
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. English or Japanese is fine. / 英語・日本語どちらでも構いません。
+        For security issues please use private vulnerability reporting instead (see SECURITY.md).
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component / 対象
+      multiple: true
+      options:
+        - app (Expo / WebView shell)
+        - backend cmd/server (Go binary)
+        - backend cmd/worker (Cloudflare Workers + D1)
+        - openapi / generated code
+        - bridge protocol (app/src/bridge.ts)
+        - CI / workflows / mise tasks
+        - docs
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened? / 何が起きたか
+      description: Include error messages and logs. / エラーメッセージやログも貼ってください。
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect? / 期待していた動作
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce / 再現手順
+      placeholder: |
+        1. API_KEY=dev PUSH_PROVIDER=log DB_AUTO_MIGRATE=true mise run backend:run
+        2. curl -X POST http://localhost:8080/v1/devices ...
+        3. ...
+  - type: textarea
+    id: env
+    attributes:
+      label: Environment / 環境
+      description: Fill in what applies. / 該当するものだけで構いません。
+      value: |
+        - pushshell commit / version:
+        - OS (dev machine):
+        - Device / emulator and OS version:
+        - PUSH_PROVIDER (expo / native / log):
+        - DB_DIALECT (sqlite / mysql / postgres / D1):
+        - Expo SDK / Node / Go version (`mise ls`):
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else? / その他

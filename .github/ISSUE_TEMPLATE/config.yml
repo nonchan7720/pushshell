@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability / 脆弱性の報告
+    url: https://github.com/nonchan7720/pushshell/security/advisories/new
+    about: Please report security issues privately. / 脆弱性は公開 Issue ではなくこちらから非公開で報告してください。
+  - name: Roadmap / ロードマップ
+    url: https://github.com/nonchan7720/pushshell/blob/main/docs/ROADMAP.md
+    about: Planned features and where help is wanted. / 予定している機能と手伝ってほしい箇所。

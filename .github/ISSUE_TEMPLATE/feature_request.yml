@@ -1,0 +1,48 @@
+name: Feature request / 機能要望
+description: Propose a new capability or an improvement. / 新機能や改善の提案
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        English or Japanese is fine. / 英語・日本語どちらでも構いません。
+        Check [docs/ROADMAP.md](https://github.com/nonchan7720/pushshell/blob/main/docs/ROADMAP.md) first; if the idea is already there, comment on the tracking issue or say so below.
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component / 対象
+      multiple: true
+      options:
+        - app (Expo / WebView shell)
+        - backend (API / push delivery / storage)
+        - bridge protocol (app/src/bridge.ts)
+        - openapi / SDKs
+        - deployment (Docker, Cloudflare Workers, ...)
+        - CI / tooling
+        - docs
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem / 困っていること
+      description: What are you trying to do and what gets in the way? / 何をしたくて、何が妨げになっているか
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal / 提案
+      description: How should it work? Include API / bridge / env variable shapes if you have them. / どう動くべきか。API や bridge、env の案があれば。
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered / 検討した代替案
+  - type: checkboxes
+    id: contribute
+    attributes:
+      label: Contribution / 貢献
+      options:
+        - label: I am willing to open a pull request for this. / 自分で PR を出せます
