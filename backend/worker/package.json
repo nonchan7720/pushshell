@@ -12,6 +12,6 @@
   },
   "devDependencies": {
     "binaryen": "^132.0.0",
-    "wrangler": "^4.143.0"
+    "wrangler": "^4.147.0"
   }
 }
