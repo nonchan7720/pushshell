@@ -52,7 +52,7 @@ See the [README](README.md) for running the backend and the app, and
   `mise run worker:migrations:sync`.
 - **Checks pass locally.** `mise run check` at minimum; `mise run backend:lint` for Go changes.
 - **The worker still builds.** Changes under `backend/internal` must not pull ent, atlas or
-  kin-openapi into `cmd/worker`. CI enforces this and the 3 MB gzipped wasm size gate.
+  kin-openapi into `cmd/worker`. CI enforces this and the 64 MiB (uncompressed) worker size gate.
 - **Keep the template promise.** A user of the template should be able to ship their app by
   changing environment variables only. Prefer new `.env` variables over hard-coded values.
 - **Bridge / API compatibility.** Additive changes to the bridge protocol and the HTTP API are

@@ -15,7 +15,7 @@ const defaultHTTPTimeout = 10 * time.Second
 // httptest.Server.Client(); it is an interface rather than *http.Client so
 // the js/wasm build (cmd/worker) can use a fetch-backed implementation
 // without ever calling (*http.Client).Do — see httpclient_js.go for why
-// that matters (it is worth ~1.1MB of gzip in the worker's wasm).
+// that matters (workerd rejects Go's own js/wasm fetch call).
 type HTTPDoer interface {
 	Do(*http.Request) (*http.Response, error)
 }

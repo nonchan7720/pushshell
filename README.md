@@ -77,7 +77,7 @@ The same backend has two entry points.
 | Entry point | Runtime | DB | Differences |
 |---|---|---|---|
 | `cmd/server` | Plain Go binary (no CGO) | sqlite / mysql / postgres (`internal/store/entstore`, ent + Atlas migrations) | Full OpenAPI request validation via kin-openapi |
-| `cmd/worker` | Cloudflare Workers (`GOOS=js GOARCH=wasm`, about 2.2 MB gzipped, fits the free plan) | D1 (`internal/store/sqlstore`, plain `database/sql`) | Does not link ent / atlas / kin-openapi. Outbound HTTP goes through `cloudflare/fetch` |
+| `cmd/worker` | Cloudflare Workers (`GOOS=js GOARCH=wasm`, about 9 MB uncompressed, well under the 64 MiB limit) | D1 (`internal/store/sqlstore`, plain `database/sql`) | Does not link ent / atlas / kin-openapi. Outbound HTTP goes through `cloudflare/fetch` |
 
 `internal/core` (use cases), `internal/transport/httpapi` (the oapi-codegen server implementation)
 and `internal/push` are shared by both.
@@ -257,7 +257,7 @@ database. See [`backend/README.md`](backend/README.md).
 
 | Workflow | Trigger | What it does |
 |---|---|---|
-| `ci.yml` | PRs and pushes to main | `backend`: generated code is up to date, vet / lint / test, CGO-free build, migration consistency. `worker`: wasm build, checks that ent / atlas / kin-openapi are not linked, boots the built wasm with wrangler dev (workerd) + local D1 and smoke-tests the API, 3 MB gzip size gate. `app`: generated types are up to date, typecheck |
+| `ci.yml` | PRs and pushes to main | `backend`: generated code is up to date, vet / lint / test, CGO-free build, migration consistency. `worker`: wasm build, checks that ent / atlas / kin-openapi are not linked, boots the built wasm with wrangler dev (workerd) + local D1 and smoke-tests the API, 64 MiB uncompressed size gate. `app`: generated types are up to date, typecheck |
 | `android-apk.yml` (Android Build) | Manual (`workflow_dispatch`) | Builds with `APP_NAME` / `ANDROID_PACKAGE` / `WEBAPP_URL` / `API_BASE_URL` / `PUSH_PROVIDER` etc. from inputs and the artifact type (`apk` / `aab` / `both`), then uploads the artifact. New Google Play apps require AAB. Signs the release build when `ANDROID_KEYSTORE_BASE64` etc. are present, bundles FCM config when `GOOGLE_SERVICES_JSON_BASE64` is present |
 | `android-emulator.yml` | Manual (`workflow_dispatch`) | Boots an emulator on a KVM-enabled ubuntu runner, installs and launches the release APK (x86_64). Connects to a backend on the runner (`PUSH_PROVIDER=log`) and `examples/webapp` via `10.0.2.2`, uploads screenshots and logcat |
 

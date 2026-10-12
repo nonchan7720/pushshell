@@ -24,17 +24,14 @@ import (
 //     workers-go's fetch package builds a proper Request object and calls
 //     fetch(request, init), which workerd accepts.
 //
-//  2. Size: (*http.Client).Do falls back to http.DefaultTransport when
-//     Client.Transport is nil, so merely calling Do — even on a client
-//     whose Transport is always set — makes the linker keep the whole
-//     *http.Transport, and with it crypto/tls, crypto/x509, the root-CA
-//     handling and every cipher they reach: ~4.8MB raw / ~1.1MB gzip of
-//     wasm this worker never executes (Workers' own fetch does TLS).
-//     Calling the RoundTripper directly keeps none of that, which is the
-//     single biggest lever for staying under the free plan's 3MB gzip
-//     limit (see worker/build.sh and the size gate in .github/workflows/ci.yml).
-//     For the same reason no code reachable from cmd/worker may call
-//     (*http.Client).Do / Get / Post; HTTPDoer exists so the senders don't.
+//  2. Size (a side benefit): (*http.Client).Do falls back to
+//     http.DefaultTransport when Client.Transport is nil, so merely calling
+//     Do — even on a client whose Transport is always set — makes the
+//     linker keep the whole *http.Transport, and with it crypto/tls,
+//     crypto/x509, the root-CA handling and every cipher they reach: ~4.8MB
+//     raw of wasm this worker never executes (Workers' own fetch does TLS).
+//     That is well within Workers' 64 MiB uncompressed limit, so it is not
+//     a hard rule, but there is no reason to ship it either.
 func newHTTPClient(timeout time.Duration) HTTPDoer {
 	return &fetchDoer{
 		rt:      fetch.NewClient().HTTPClient(fetch.RedirectModeFollow).Transport,
