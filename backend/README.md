@@ -69,7 +69,7 @@ middleware (`auth.go`, `apiKeyMiddleware`: 操作 ID が apiKeyAuth のものか
 (kin-openapi) の中ではなく httpapi 自身の中にあるので、`Validator` を
 組み込まない `cmd/worker` でも API キーは必ず検証される。生成コードが
 依存する `github.com/oapi-codegen/runtime` (+ `google/uuid`、
-`apapsch/go-jsonmerge`) は wasm では **gzip で 50KB 弱**で、Workers の
+`apapsch/go-jsonmerge`) は wasm では小さく、Workers の
 サイズ上限に対して問題にならない (後述「サイズ」)。生成クライアント
 (`ClientWithResponses`) は `internal/transport/httpapi` のテストが使う。
 
@@ -553,47 +553,24 @@ wasm に転送する JS グルー) と `wasm_exec.js` を生成し、続けて
   フォーマットなので `entstore`/`sqlstore` は同じ DB 上で相互運用できる)
   ため、D1 に渡る値は常に string/int64/nil だけになり、この変換レイヤー
   (旧 `cmd/worker/d1time.go`) 自体が不要になった。
-- **サイズ**: `mise run worker:build` が実行時に表示する通り、
-  `app.wasm` は現在 **約 7.98MB (raw) / 約 2.15MB (gzip -9)** で、
-  Cloudflare Workers の無料プランの上限 **3MB (gzip 後、3,145,728 バイト)**
-  を約 1MB 下回る (有料 [Workers Paid] プランの上限は 10MB)。
-  `.github/workflows/ci.yml` の `worker` ジョブが同じ 3,145,728 バイトで
-  size gate をかけているので、超えた時点で CI が落ちる。
-  ent / atlas / kin-openapi を切り離す前は約 37MB (raw) / 約 8.1MB (gzip)
-  だった。内訳 (同じビルドフラグで層ごとに計測した値):
+- **サイズ**: Cloudflare Workers のサイズ上限は現在 **全プラン共通で
+  非圧縮 64MiB (67,108,864 バイト)** のみで、圧縮後 (gzip) サイズの上限は
+  無い ([Limits](https://developers.cloudflare.com/workers/platform/limits/)。
+  2026-09 以前は gzip 後 3MB (Free) / 10MB (Paid) だった)。
+  `mise run worker:build` が実行時に表示する通り、`build/` の合計は現在
+  **約 9.2MB (非圧縮)** で、上限に対して十分小さい。
+  `.github/workflows/ci.yml` の `worker` ジョブが `build/` の合計に対して
+  64MiB の size gate をかけているので、超えた時点で CI が落ちる。
 
-  | 含めるもの | raw | gzip -9 |
-  |---|---|---|
-  | `workers.Serve` + 固定レスポンスのハンドラだけ (workers-go + net/http サーバー側) | 5.29MB | 1.49MB |
-  | + `database/sql` + D1 ドライバ + `internal/store/sqlstore` | 5.46MB | 1.54MB |
-  | + `internal/core` + `internal/transport/httpapi` + `internal/api` (生成サーバー) + `log/slog` (`PUSH_PROVIDER=log`) | 7.11MB | 1.95MB |
-  | + `push.ExpoSender` (outbound fetch) | 7.18MB | 1.97MB |
-  | + `internal/app.BuildSender` 全体 (FCM/APNs の JWT 署名 = `crypto/rsa`/`ecdsa`/`x509`/`pem`) = `cmd/worker` | 7.95MB | 2.15MB |
-
-  ここに至るまでの主な削減:
-  - **`(*http.Client).Do` を wasm ビルドで呼ばない** (`internal/push`
-    の `HTTPDoer` インターフェース + `httpclient_js.go`): 一番効いた変更で
-    **gzip で約 1.1MB (raw で約 4.8MB)**。`(*http.Client).Do` は
-    `Transport` が nil のとき `http.DefaultTransport` にフォールバックする
-    コードを含むため、`Transport` を常に設定していても Go のリンカは
-    `*http.Transport` ごと `crypto/tls` / `crypto/x509` / ルート CA 処理 /
-    各暗号スイートを残してしまう (Workers では TLS は fetch 側が行うので
-    一切実行されないコード)。wasm ビルドでは `cloudflare/fetch` の
-    `http.RoundTripper` を直接呼ぶ `fetchDoer` を使い、これを丸ごと
-    落とした。**`cmd/worker` から到達するコードで `(*http.Client).Do` /
-    `Get` / `Post` を呼ぶと即この分が戻ってくる**ので注意。
-  - `worker/build.sh` の `GOEXPERIMENT=nojsonv2`: Go 1.26+ がデフォルトで
-    リンクする `encoding/json/v2` / `encoding/json/jsontext` の実装を
-    使わないよう明示的に外す (`encoding/json` パッケージ自体の挙動は変わらない
-    — 常に classic 版の実装になる。このバックエンドは `encoding/json/v2` を
-    どこでも import していない)。**gzip で約 220KB** の削減。
-  - ent / atlas / kin-openapi を `cmd/worker` からリンクしない構成
-    (`internal/core` + `sqlstore`、`openapivalidate` は cmd/server 専用)。
-
-  効果が無く不採用にしたもの: `wasm-opt -Oz` (binaryen。誤差程度)、
-  `GOWASM=satconv,signext` (約 1KB)。oapi-codegen の生成サーバー
-  (`github.com/oapi-codegen/runtime` 込み) は手書きルーティングと比べて
-  gzip で約 45KB の差しかなく、生成コードのまま維持している。
+  gzip 3MB 制限があった頃はサイズ削減のために `GOEXPERIMENT=nojsonv2`
+  (Go 1.26+ がリンクする `encoding/json/v2` 実装を外す。raw で約 0.9MB) も
+  使っていたが、上限撤廃に伴い外した (実験フラグに依存しないため)。
+  `-ldflags='-s -w'` / `-trimpath` はコストが無いので残している。
+  ent / atlas / kin-openapi を `cmd/worker` からリンクしない構成
+  (`internal/core` + `sqlstore`、`openapivalidate` は cmd/server 専用) と
+  `fetchDoer` (下記「push.Sender と fetch」。`(*http.Client).Do` を呼ばないことで
+  `crypto/tls` 一式 (raw で約 4.8MB) もリンクされない) は、サイズとは別の
+  理由 (前者は依存の軽さ、後者は workerd 上での正しさ) で維持している。
 
   (`internal/push` 自体は Go 標準ライブラリ + wasm ビルド時の
   `github.com/syumai/workers-go/cloudflare/fetch` だけに依存する作りで、
@@ -650,9 +627,9 @@ Go 標準の `net/http/roundtrip_js.go` は `fetch(url, options)` の 2 引数�
 (`httpclient_default.go`) は今まで通りの `&http.Client{Timeout: 10s}`、
 wasm (`httpclient_js.go`, `//go:build js && wasm`) は `cloudflare/fetch` の
 `http.RoundTripper` を直接呼ぶ `fetchDoer` (タイムアウトは request の
-context で best effort)。`*http.Client` を経由しないのはサイズのため
-でもある (上記「サイズ」: `(*http.Client).Do` を 1 箇所でも呼ぶと
-`crypto/tls` 一式が wasm に残り gzip で約 1.1MB 増える)。これを
+context で best effort)。`*http.Client` を経由しないと副次的にサイズも
+減る (上記「サイズ」: `(*http.Client).Do` を 1 箇所でも呼ぶと
+`crypto/tls` 一式が wasm に残り raw で約 4.8MB 増える)。これを
 
 - `push.ExpoSender.sendBatch` (`expo.go`)
 - `push.FCMSender.sendOne` (`fcm.go`。送信自体だけでなく、
@@ -721,7 +698,7 @@ mise run worker:dev               # npx wrangler dev --port 8787
 `mise run worker:build` は `../cmd/worker` を Go の通常ツールチェーンで
 wasm ビルドする ([TinyGo ではない](https://github.com/syumai/workers-go) —
 `workers-assets-gen -mode=go` を使う)。ent / atlas / kin-openapi を
-リンクしないため `app.wasm` は約 7.98MB (raw) / 約 2.15MB (gzip -9) になる
+リンクしないため `build/` の合計は非圧縮で約 9.2MB になる
 (ビルドのたびにサイズを表示する) — 上記「サイズ」参照。
 
 ### スモークテスト (`mise run worker:smoke`)
