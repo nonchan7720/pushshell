@@ -5,13 +5,13 @@ go 1.26.8
 require (
 	ariga.io/atlas v1.3.0
 	entgo.io/ent v0.14.6
-	github.com/getkin/kin-openapi v0.149.0
+	github.com/getkin/kin-openapi v0.151.0
 	github.com/go-sql-driver/mysql v1.10.1
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/oapi-codegen/nethttp-middleware v1.2.0
 	github.com/oapi-codegen/runtime v1.7.0
 	github.com/syumai/workers-go v0.36.0
-	modernc.org/sqlite v1.59.0
+	modernc.org/sqlite v1.60.1
 )
 
 require (
